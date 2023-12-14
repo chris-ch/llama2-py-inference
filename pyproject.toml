@@ -4,6 +4,23 @@ version = "0.1.0"
 description = "Pythonized version of llama2.c"
 authors = ["Christophe <christophe.alexandre@pm.me>"]
 readme = "README.md"
+repository = "https://github.com/chris-ch/llama2-py-inference"
+keywords = ["llama2"]
+classifiers = [
+    "Intended Audience :: Education",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Development Status :: 4 - Beta"
+]
+packages = [
+    { include = "llama2", from="src" },
+    { include = "scripts" }
+]
+include = [
+    { path = "tests", format = "sdist" },
+    { path = "scripts/*.py" },
+    "README.md",
+    "LICENSE"
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -13,3 +30,6 @@ numpy = "^1.26.2"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+llama2 = "scripts.llama2_run:main"
