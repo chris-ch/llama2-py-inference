@@ -181,13 +181,11 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             state.att[index_head] = softmax(state.att[index_head], step_count + 1)
 
             # Weighted sum of the values, store back into xb
-            state.xb[index_head * network.head_dimension: (index_head + 1) * network.head_dimension] = numpy.zeros(network.head_dimension)
+            state.xb[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
                 value_vector = state.value_cache[timestep, index_layer, index_head]
                 attention_weight: numpy.float64 = state.att[index_head, timestep]
-                # Accumulate the weighted value into xb
-                for head_item_index in range(network.head_dimension):
-                    state.xb[index_head * network.head_dimension + head_item_index] += attention_weight * value_vector[head_item_index]
+                state.xb[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] += numpy.multiply(value_vector, attention_weight)
 
         # Final matrix multiplication to get the output of the attention
         state.xb2 = numpy.dot(network.weighting.wo[index_layer], state.xb)
