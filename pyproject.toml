@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "llama2inference"
+version = "0.1.0"
+description = "Pythonized version of llama2.c"
+authors = ["Christophe <christophe.alexandre@pm.me>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^1.26.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
