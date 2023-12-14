@@ -4,7 +4,7 @@ import time
 import math
 import struct
 from typing import List, BinaryIO, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy
 from numpy.typing import NDArray
@@ -38,6 +38,10 @@ class Network:
     vocab_size: int  # number of different tokens that can be represented by the inputs passed when calling LlamaModel
     seq_len: int  # maximum sequence length that this model might ever be used with
     weighting: TransformerWeighting = None
+    head_dimension: int = field(init=False)
+
+    def __post_init__(self):
+        self.head_dimension = self.dim // self.num_attention_heads
 
 
 @dataclass
@@ -364,11 +368,11 @@ def _make_init_state(network: Network) -> RunState:
     state.xb2 = numpy.zeros(shape=network.dim)
     state.hb = numpy.zeros(shape=network.hidden_dim)
     state.hb2 = numpy.zeros(shape=network.hidden_dim)
-    state.q = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
-    state.k = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
-    state.v = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.q = numpy.zeros(shape=(network.num_attention_heads, ))
+    state.k = numpy.zeros(shape=(network.num_attention_heads, network.head_dimension))
+    state.v = numpy.zeros(shape=(network.num_attention_heads, network.head_dimension))
     state.att = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
     state.logits = numpy.zeros(shape=network.vocab_size)
-    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.dim // network.num_attention_heads))
-    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
+    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
     return state
