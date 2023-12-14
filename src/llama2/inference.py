@@ -211,41 +211,43 @@ def str_lookup(occurrence: str, vocab: List[str]) -> int:
         return -1
 
 
-def bpe_encode(text: str, vocab: List[str], vocab_scores: NDArray[numpy.float64]) -> List[int]:
+def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float64]) -> List[int]:
     tokens = []
-
     # First encode every individual character in the input text
-    for pos, char in enumerate(text):
-        string = char
-        pos = str_lookup(string, vocab)
+    for char in prompt:
+        pos = str_lookup(char, vocab)
         if pos == -1:
-            print(f"not a good prompt at pos {pos}")
+            logging.error(f"not a good prompt at index {pos}")
             sys.exit(1)
         tokens.append(pos)
 
     # Merge the best consecutive pair each iteration, according to the scores in vocab_scores
+    return _process_tokens(tokens, vocab, vocab_scores)
+
+
+def _process_tokens(tokens: List[int], vocab: List[str], vocab_scores: NDArray[numpy.float64]):
     while True:
         best_score = -1e10
         best_id = -1
         best_idx = -1
 
-        for i in range(len(tokens) - 1):
+        for count, token_pair in enumerate(zip(tokens[:-1], tokens[1:])):
+            token_prev, token_next = token_pair
             # Check if we can merge the pair (tokens[i], tokens[i+1])
-            string = vocab[tokens[i]] + vocab[tokens[i + 1]]
-            pos = str_lookup(string, vocab)
+            merged_tokens = vocab[token_prev] + vocab[token_next]
+            pos = str_lookup(merged_tokens, vocab)
             if pos != -1 and vocab_scores[pos] > best_score:
                 # This merge pair exists in vocab! Record its score and position
                 best_score = vocab_scores[pos]
                 best_id = pos
-                best_idx = i
+                best_idx = count
 
         if best_idx == -1:
             break  # We couldn't find any more pairs to merge, so we're done
 
         # Merge the consecutive pair (best_idx, best_idx+1) into new token best_id
         tokens[best_idx] = best_id
-        # Delete token at position best_idx+1, shift the entire sequence back 1
-        tokens = tokens[:best_idx + 1] + tokens[best_idx + 2:]
+        del tokens[best_idx + 1]
 
     return tokens
 

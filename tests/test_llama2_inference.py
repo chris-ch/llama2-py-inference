@@ -3,10 +3,22 @@ import unittest
 from pathlib import Path
 import io
 
+import numpy
+
 from llama2 import inference
+from llama2.inference import _process_tokens
 
 
 class LLaMa2TestCase(unittest.TestCase):
+
+    def test_find_tokens(self):
+        vocab = ['ef', 'cde', 'cd', 'ab', 'abc', 'a', 'b', 'c', 'f', 'fc', 'bcd']
+        tokens = list(range(1, len(vocab)))
+        vocab_scores = numpy.array([0.5, -0.2, 0.3, 0.1, 0.5, -0.1, 0.4, 0.2, -0.3, 0.7, 0.1])
+        result = _process_tokens(tokens, vocab, vocab_scores)
+        expected_result = [1, 2, 3, 4, 4, 8, 9, 10]
+        self.assertEqual(expected_result, result)
+
     def test_seed_1(self):
         data_path = str(Path(__file__).parent.parent.absolute())
         with open(os.path.sep.join([data_path, 'data', 'stories15M.bin']), 'rb') as model_file, open(
