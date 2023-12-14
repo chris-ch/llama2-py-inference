@@ -133,15 +133,15 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
         w = network.weighting.wq[index_layer]
         state.q = numpy.dot(w, state.xb).reshape(network.n_heads, head_size)
         w1 = network.weighting.wk[index_layer]
-        state.k = numpy.dot(w1, state.xb)
+        state.k = numpy.dot(w1, state.xb).reshape(network.n_heads, head_size)
         w2 = network.weighting.wv[index_layer]
-        state.v = numpy.dot(w2, state.xb)
+        state.v = numpy.dot(w2, state.xb).reshape(network.n_heads, head_size)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for index_head in range(network.n_heads):
             # Get the q and k vectors for this head
             q = state.q[index_head]
-            k = state.k[index_head * head_size: (index_head + 1) * head_size]
+            k = state.k[index_head]
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for head_item_index in range(0, head_size, 2):
@@ -156,12 +156,12 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
 
             # reassigned back to state.q and state.k
             state.q[index_head] = q
-            state.k[index_head * head_size: (index_head + 1) * head_size] = k
+            state.k[index_head] = k
 
         # Save key,value at this time step (pos) to our kv cache
         loff = index_layer * network.seq_len * dim  # kv cache layer offset for convenience
-        state.key_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.k
-        state.value_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.v
+        state.key_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.k.reshape(dim)
+        state.value_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.v.reshape(dim)
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.n_heads):
@@ -374,8 +374,8 @@ def _make_init_state(network: Network) -> RunState:
     state.hb = numpy.zeros(shape=network.hidden_dim)
     state.hb2 = numpy.zeros(shape=network.hidden_dim)
     state.q = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
-    state.k = numpy.zeros(shape=network.dim)
-    state.v = numpy.zeros(shape=network.dim)
+    state.k = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
+    state.v = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
     state.att = numpy.zeros(shape=(network.n_heads, network.seq_len))
     state.logits = numpy.zeros(shape=network.vocab_size)
     state.key_cache = [0.0] * (network.n_layers * network.seq_len * network.dim)
