@@ -116,11 +116,6 @@ def softmax(values: NDArray, size: int) -> NDArray:
 
 # token, pos, config, state, weights
 def transformer(token: int, step_count: int, network: Network, state: RunState) -> None:
-    # A few convenience variables
-    dim = network.dim
-    hidden_dim = network.hidden_dim
-    head_size = dim // network.num_attention_heads
-
     # Copy the token embedding into x
     state.x = network.weighting.token_embedding_table[token]
 
@@ -135,11 +130,11 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
 
         # QKV matmuls for this position
         w = network.weighting.wq[index_layer]
-        state.q = numpy.dot(w, state.xb).reshape(network.num_attention_heads, head_size)
+        state.q = numpy.dot(w, state.xb).reshape(network.num_attention_heads, network.head_dimension)
         w1 = network.weighting.wk[index_layer]
-        state.k = numpy.dot(w1, state.xb).reshape(network.num_attention_heads, head_size)
+        state.k = numpy.dot(w1, state.xb).reshape(network.num_attention_heads, network.head_dimension)
         w2 = network.weighting.wv[index_layer]
-        state.v = numpy.dot(w2, state.xb).reshape(network.num_attention_heads, head_size)
+        state.v = numpy.dot(w2, state.xb).reshape(network.num_attention_heads, network.head_dimension)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for index_head in range(network.num_attention_heads):
@@ -148,7 +143,7 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             key_vector = state.k[index_head]
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
-            for head_item_index in range(0, head_size, 2):
+            for head_item_index in range(0, network.head_dimension, 2):
                 q0, q1 = query_vector[head_item_index], query_vector[head_item_index + 1]
                 k0, k1 = key_vector[head_item_index], key_vector[head_item_index + 1]
                 fcr: numpy.float64 = freq_cis_real_row[head_item_index // 2]
@@ -177,7 +172,7 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
                 key_vector = state.key_cache[timestep, index_layer, index_head]
 
                 # Calculate the attention score as the dot product of q and k
-                score = numpy.divide(numpy.dot(query_vector, key_vector), math.sqrt(head_size))
+                score = numpy.divide(numpy.dot(query_vector, key_vector), math.sqrt(network.head_dimension))
 
                 # Save the score to the attention buffer
                 state.att[index_head, timestep] = score
@@ -186,13 +181,13 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             state.att[index_head] = softmax(state.att[index_head], step_count + 1)
 
             # Weighted sum of the values, store back into xb
-            state.xb[index_head * head_size: (index_head + 1) * head_size] = [0.0] * head_size
+            state.xb[index_head * network.head_dimension: (index_head + 1) * network.head_dimension] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
                 value_vector = state.value_cache[timestep, index_layer, index_head]
                 attention_weight: numpy.float64 = state.att[index_head, timestep]
                 # Accumulate the weighted value into xb
-                for head_item_index in range(head_size):
-                    state.xb[index_head * head_size + head_item_index] += attention_weight * value_vector[head_item_index]
+                for head_item_index in range(network.head_dimension):
+                    state.xb[index_head * network.head_dimension + head_item_index] += attention_weight * value_vector[head_item_index]
 
         # Final matrix multiplication to get the output of the attention
         state.xb2 = numpy.dot(network.weighting.wo[index_layer], state.xb)

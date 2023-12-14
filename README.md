@@ -39,3 +39,28 @@ Her mom smiled and said, "That's very kind of you, Lily. You're such a good help
 Lily felt proud of herself and continued to read her books, feeling happy and content.
 <s>
 ```
+
+# _Attention_ architecture
+![_Attention_ architecture](doc/Attention-qkv.png)
+From [Wikipedia](https://en.wikipedia.org/wiki/Attention_(machine_learning)):
+
+The Q and K sub-networks of a single "attention head" calculate the soft weights, originating from the word "that".
+(Encoder-only QKV variant).
+The sentence is sent through 3 parallel streams (left), which emerge at the end as the context vector (right).
+The word embedding size is 300 and the neuron count is 100 in each sub-network of the attention head.
+
+The capital letter **X** denotes a matrix sized 4 × 300, consisting of the embeddings of all four words.
+The small underlined letter _x_ denotes the embedding vector (sized 300) of the word "that".
+The attention head includes three (vertically arranged in the illustration) sub-networks, each having 100 neurons
+with a weight matrix sized 300 × 100.
+
+The asterisk within parenthesis "(*)" denotes the softmax( qKT / √100 ), i.e. not yet multiplied by the matrix V.
+Rescaling by √100 prevents a high variance in qKT that would allow a single word to excessively dominate the softmax
+resulting in attention to only one word, as a discrete hard max would do.
+
+_Notation_: the commonly written row-wise softmax formula above assumes that vectors are rows, which contradicts the
+standard math notation of column vectors. More correctly, we should take the transpose of the context vector and use
+the column-wise softmax, resulting in the more correct form
+
+`Context = (XV_W)T × softmax( (K_W X^T) × (xQ_w)^T / √100 ).
+`
