@@ -1,3 +1,4 @@
+import logging
 import sys
 import time
 import math
@@ -303,7 +304,8 @@ def _make_init_state(network: Network) -> RunState:
     return state
 
 
-def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, steps: int, prompt: str, seed: int):
+def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, steps: int, prompt: str, seed: int,
+        output=sys.stdout):
     if seed is None:
         seed = int(time.time())
     numpy.random.seed(seed)
@@ -323,12 +325,11 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
     prompt_tokens = bpe_encode(prompt, vocab, vocab_scores) if prompt else []
     # Start the main loop
     start: float = 0.  # Used to time our code, only initialized after the first iteration
-    next_token: int = 0  # Will store the next token in the sequence
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     token_code: int = 1
     pos: int = 0  # Position in the sequence
     # Explicitly print the initial BOS token for stylistic symmetry reasons
-    print("<s>", flush=True)
+    print("<s>", flush=True, file=output)
 
     while pos < steps:
 
@@ -355,7 +356,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
             if token_code == 1 and vocab[next_token][0] == ' ' else vocab[next_token]
         )
 
-        print(token_str, end="", flush=True)
+        print(token_str, end="", flush=True, file=output)
 
         if next_token == 1:
             break
@@ -370,7 +371,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
 
     # Report achieved tok/s
     end = time_in_ms()
-    print(f"\nachieved tok/s: {(steps - 1) / (end - start) * 1000:.01f}")
+    logging.info(f"achieved tok/s: {(steps - 1) / (end - start) * 1000:.01f}")
 
 
 def _load_network(file: BinaryIO) -> Network:
