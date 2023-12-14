@@ -160,8 +160,8 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
 
         # Save key,value at this time step (pos) to our kv cache
         loff = index_layer * network.seq_len * dim  # kv cache layer offset for convenience
-        state.key_cache[loff + step_count * dim: loff + (step_count + 1) * dim] = state.k.reshape(dim)
-        state.value_cache[loff + step_count * dim: loff + (step_count + 1) * dim] = state.v.reshape(dim)
+        state.key_cache[step_count, index_layer] = state.k
+        state.value_cache[step_count, index_layer] = state.v
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.n_heads):
@@ -171,7 +171,7 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             # Iterate over all timesteps, including the current one
             for t in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                k = state.key_cache[loff + t * dim + index_head * head_size: loff + (t + 1) * dim + index_head * head_size]
+                k = state.key_cache[t, index_layer, index_head]
 
                 # Calculate the attention score as the dot product of q and k
                 score = sum(q[i] * k[i] for i in range(head_size))
@@ -187,7 +187,7 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             state.xb[index_head * head_size: (index_head + 1) * head_size] = [0.0] * head_size
             for t in range(step_count + 1):
                 # Get the value vector for this head and at this timestep
-                v = state.value_cache[loff + t * dim + index_head * head_size: loff + (t + 1) * dim + index_head * head_size]
+                v = state.value_cache[t, index_layer, index_head]
                 # Get the attention weight for this timestep
                 a = state.att[index_head][t]
                 # Accumulate the weighted value into xb
@@ -378,6 +378,6 @@ def _make_init_state(network: Network) -> RunState:
     state.v = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
     state.att = numpy.zeros(shape=(network.n_heads, network.seq_len))
     state.logits = numpy.zeros(shape=network.vocab_size)
-    state.key_cache = [0.0] * (network.n_layers * network.seq_len * network.dim)
-    state.value_cache = [0.0] * (network.n_layers * network.seq_len * network.dim)
+    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.n_heads, network.dim // network.n_heads))
+    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.n_heads, network.dim // network.n_heads))
     return state
