@@ -144,23 +144,23 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
         # Apply RoPE rotation to the q and k vectors for each head
         for index_head in range(network.num_attention_heads):
             # Get the q and k vectors for this head
-            q = state.q[index_head]
-            k = state.k[index_head]
+            query_vector = state.q[index_head]
+            key_vector = state.k[index_head]
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for head_item_index in range(0, head_size, 2):
-                q0, q1 = q[head_item_index], q[head_item_index + 1]
-                k0, k1 = k[head_item_index], k[head_item_index + 1]
+                q0, q1 = query_vector[head_item_index], query_vector[head_item_index + 1]
+                k0, k1 = key_vector[head_item_index], key_vector[head_item_index + 1]
                 fcr: numpy.float64 = freq_cis_real_row[head_item_index // 2]
                 fci: numpy.float64 = freq_cis_imag_row[head_item_index // 2]
-                q[head_item_index] = q0 * fcr - q1 * fci
-                q[head_item_index + 1] = q0 * fci + q1 * fcr
-                k[head_item_index] = k0 * fcr - k1 * fci
-                k[head_item_index + 1] = k0 * fci + k1 * fcr
+                query_vector[head_item_index] = q0 * fcr - q1 * fci
+                query_vector[head_item_index + 1] = q0 * fci + q1 * fcr
+                key_vector[head_item_index] = k0 * fcr - k1 * fci
+                key_vector[head_item_index + 1] = k0 * fci + k1 * fcr
 
             # reassigned back to state.q and state.k
-            state.q[index_head] = q
-            state.k[index_head] = k
+            state.q[index_head] = query_vector
+            state.k[index_head] = key_vector
 
         # Save key,value at this time step (pos) to our kv cache
         state.key_cache[step_count, index_layer] = state.k
@@ -169,16 +169,15 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
             # Get the query vector for this head
-            q = state.q[index_head]
+            query_vector = state.q[index_head]
 
             # Iterate over all timesteps, including the current one
             for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                k = state.key_cache[timestep, index_layer, index_head]
+                key_vector = state.key_cache[timestep, index_layer, index_head]
 
                 # Calculate the attention score as the dot product of q and k
-                score = sum(q[i] * k[i] for i in range(head_size))
-                score /= math.sqrt(head_size)
+                score = numpy.divide(numpy.dot(query_vector, key_vector), math.sqrt(head_size))
 
                 # Save the score to the attention buffer
                 state.att[index_head, timestep] = score
