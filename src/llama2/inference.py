@@ -100,8 +100,9 @@ def rms_norm(x: NDArray, weight: NDArray) -> NDArray:
 
 def softmax(values: NDArray, size: int) -> NDArray:
     max_val = numpy.max(values[:size])
-    exp_values = numpy.concatenate((numpy.exp(values[:size] - max_val), values[size:]))
-    return numpy.divide(exp_values, numpy.sum(exp_values))
+    exp_values = numpy.exp(values[:size] - max_val)
+    softmax_values = exp_values / numpy.sum(exp_values)
+    return numpy.concatenate((softmax_values, values[size:]))
 
 
 def transformer(token_code: int, step_count: int, network: Network, state: RunState) -> NDArray[numpy.float64]:
