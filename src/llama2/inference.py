@@ -7,25 +7,25 @@ from typing import List, BinaryIO, Tuple
 from dataclasses import dataclass
 
 import numpy
-from numpy.typing import ArrayLike
+from numpy.typing import NDArray
 
 
 @dataclass
 class TransformerWeighting:
-    token_embedding_table: ArrayLike = None
-    rms_att_weight: ArrayLike = None
-    wq: ArrayLike = None
-    wk: ArrayLike = None
-    wv: ArrayLike = None
-    wo: ArrayLike = None
-    rms_ffn_weight: ArrayLike = None
-    w1: ArrayLike = None
-    w3: ArrayLike = None
-    w2: ArrayLike = None
-    rms_final_weight: ArrayLike = None
-    freq_cis_real: ArrayLike = None
-    freq_cis_imag: ArrayLike = None
-    wcls: ArrayLike = None
+    token_embedding_table: NDArray = None
+    rms_att_weight: NDArray = None
+    wq: NDArray = None
+    wk: NDArray = None
+    wv: NDArray = None
+    wo: NDArray = None
+    rms_ffn_weight: NDArray = None
+    w1: NDArray = None
+    w3: NDArray = None
+    w2: NDArray = None
+    rms_final_weight: NDArray = None
+    freq_cis_real: NDArray[numpy.float64] = None
+    freq_cis_imag: NDArray[numpy.float64] = None
+    wcls: NDArray = None
 
 
 @dataclass
@@ -42,28 +42,28 @@ class Network:
 
 @dataclass
 class RunState:
-    x: ArrayLike = None
-    xb: ArrayLike = None
-    q: ArrayLike = None
-    k: ArrayLike = None
-    v: ArrayLike = None
-    att: ArrayLike = None
-    key_cache: ArrayLike = None
-    value_cache: ArrayLike = None
-    xb2: ArrayLike = None
-    hb: ArrayLike = None
-    hb2: ArrayLike = None
-    logits: ArrayLike = None
+    x: NDArray = None
+    xb: NDArray = None
+    q: NDArray = None
+    k: NDArray = None
+    v: NDArray = None
+    att: NDArray = None
+    key_cache: NDArray = None
+    value_cache: NDArray = None
+    xb2: NDArray = None
+    hb: NDArray = None
+    hb2: NDArray = None
+    logits: NDArray = None
 
 
 def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighting:
-    def read_floats(count: int) -> ArrayLike:
+    def read_floats(count: int) -> NDArray:
         return numpy.array(struct.unpack(f'{count}f', file.read(count * 4)))
 
-    def read_floats_as_array2(nrows: int, ncols: int) -> ArrayLike:
+    def read_floats_as_array2(nrows: int, ncols: int) -> NDArray:
         return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4))).reshape((nrows, ncols))
 
-    def read_floats_as_array3(ndepth: int, nrows: int, ncols: int) -> ArrayLike:
+    def read_floats_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray:
         return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))).reshape((ndepth, ncols, nrows))
 
     weights = TransformerWeighting()
@@ -97,14 +97,14 @@ def tokenizer_init(file: BinaryIO, size: int) -> Tuple[List[str], List[float], i
     return vocab, vocab_scores, max_token_length
 
 
-def rmsnorm(x: ArrayLike, weight: ArrayLike) -> ArrayLike:
+def rmsnorm(x: NDArray, weight: NDArray) -> NDArray:
     # calculate sum of squares
     ss = numpy.divide(numpy.sum(numpy.power(x, 2)), len(x)) + 1e-5
     # normalize and scale
     return numpy.multiply(numpy.multiply(weight, x), 1.0 / numpy.sqrt(ss))
 
 
-def softmax(values: ArrayLike, size: int) -> ArrayLike:
+def softmax(values: NDArray, size: int) -> NDArray:
     max_val = numpy.max(values[:size])
     exp_values = numpy.concatenate((numpy.exp(values[:size] - max_val), values[size:]))
     return numpy.divide(exp_values, numpy.sum(exp_values))
@@ -121,8 +121,8 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
     state.x = network.weighting.token_embedding_table[token]
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    freq_cis_real_row = network.weighting.freq_cis_real[step_count]
-    freq_cis_imag_row = network.weighting.freq_cis_imag[step_count]
+    freq_cis_real_row: NDArray[numpy.float64] = network.weighting.freq_cis_real[step_count]
+    freq_cis_imag_row: NDArray[numpy.float64] = network.weighting.freq_cis_imag[step_count]
 
     # Forward all the layers
     for index_layer in range(network.n_layers):
@@ -147,8 +147,8 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             for head_item_index in range(0, head_size, 2):
                 q0, q1 = q[head_item_index], q[head_item_index + 1]
                 k0, k1 = k[head_item_index], k[head_item_index + 1]
-                fcr = freq_cis_real_row[head_item_index // 2]
-                fci = freq_cis_imag_row[head_item_index // 2]
+                fcr: numpy.float64 = freq_cis_real_row[head_item_index // 2]
+                fci: numpy.float64 = freq_cis_imag_row[head_item_index // 2]
                 q[head_item_index] = q0 * fcr - q1 * fci
                 q[head_item_index + 1] = q0 * fci + q1 * fcr
                 k[head_item_index] = k0 * fcr - k1 * fci
@@ -234,7 +234,7 @@ def str_lookup(occurrence: str, vocab: List[str]) -> int:
         return -1
 
 
-def bpe_encode(text: str, vocab: List[str], vocab_scores: ArrayLike) -> List[int]:
+def bpe_encode(text: str, vocab: List[str], vocab_scores: NDArray[numpy.float64]) -> List[int]:
     tokens = []
 
     # First encode every individual character in the input text
@@ -278,7 +278,7 @@ def time_in_ms() -> float:
     return int(time.time() * 1000)
 
 
-def sample(probabilities: ArrayLike) -> int:
+def sample(probabilities: NDArray) -> int:
     r = numpy.random.random()
     cdf = numpy.cumsum(probabilities)
     return numpy.argmax(r < cdf)
@@ -302,7 +302,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
     # Create and initialize the application RunState
     state = _make_init_state(network)
 
-    prompt_tokens = bpe_encode(prompt, vocab, vocab_scores) if prompt else []
+    prompt_tokens = bpe_encode(prompt, vocab, numpy.array(vocab_scores)) if prompt else []
     # Start the main loop
     start: float = 0.  # Used to time our code, only initialized after the first iteration
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
