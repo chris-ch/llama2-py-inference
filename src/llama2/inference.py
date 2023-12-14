@@ -33,10 +33,10 @@ class Network:
     dim: int
     hidden_dim: int
     n_layers: int
-    n_heads: int
-    n_kv_heads: int
-    vocab_size: int
-    seq_len: int
+    num_attention_heads: int  # number of attention heads for each attention layer in the Transformer encoder
+    num_key_value_heads: int  # number of key_value heads that should be used to implement Grouped Query Attention
+    vocab_size: int  # number of different tokens that can be represented by the inputs passed when calling LlamaModel
+    seq_len: int  # maximum sequence length that this model might ever be used with
     weighting: TransformerWeighting = None
 
 
@@ -78,8 +78,8 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
     weights.w2 = read_floats_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
     weights.w3 = read_floats_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
     weights.rms_final_weight = read_floats(conf.dim)
-    weights.freq_cis_real = read_floats_as_array2(conf.seq_len, (conf.dim // conf.n_heads) // 2)
-    weights.freq_cis_imag = read_floats_as_array2(conf.seq_len, (conf.dim // conf.n_heads) // 2)
+    weights.freq_cis_real = read_floats_as_array2(conf.seq_len, (conf.dim // conf.num_attention_heads) // 2)
+    weights.freq_cis_imag = read_floats_as_array2(conf.seq_len, (conf.dim // conf.num_attention_heads) // 2)
     weights.wcls = weights.token_embedding_table
     return weights
 
@@ -115,7 +115,7 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
     # A few convenience variables
     dim = network.dim
     hidden_dim = network.hidden_dim
-    head_size = dim // network.n_heads
+    head_size = dim // network.num_attention_heads
 
     # Copy the token embedding into x
     state.x = network.weighting.token_embedding_table[token]
@@ -131,14 +131,14 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
 
         # QKV matmuls for this position
         w = network.weighting.wq[index_layer]
-        state.q = numpy.dot(w, state.xb).reshape(network.n_heads, head_size)
+        state.q = numpy.dot(w, state.xb).reshape(network.num_attention_heads, head_size)
         w1 = network.weighting.wk[index_layer]
-        state.k = numpy.dot(w1, state.xb).reshape(network.n_heads, head_size)
+        state.k = numpy.dot(w1, state.xb).reshape(network.num_attention_heads, head_size)
         w2 = network.weighting.wv[index_layer]
-        state.v = numpy.dot(w2, state.xb).reshape(network.n_heads, head_size)
+        state.v = numpy.dot(w2, state.xb).reshape(network.num_attention_heads, head_size)
 
         # Apply RoPE rotation to the q and k vectors for each head
-        for index_head in range(network.n_heads):
+        for index_head in range(network.num_attention_heads):
             # Get the q and k vectors for this head
             q = state.q[index_head]
             k = state.k[index_head]
@@ -159,40 +159,37 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             state.k[index_head] = k
 
         # Save key,value at this time step (pos) to our kv cache
-        loff = index_layer * network.seq_len * dim  # kv cache layer offset for convenience
         state.key_cache[step_count, index_layer] = state.k
         state.value_cache[step_count, index_layer] = state.v
 
         # Multihead attention. Iterate over all heads
-        for index_head in range(network.n_heads):
+        for index_head in range(network.num_attention_heads):
             # Get the query vector for this head
             q = state.q[index_head]
 
             # Iterate over all timesteps, including the current one
-            for t in range(step_count + 1):
+            for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                k = state.key_cache[t, index_layer, index_head]
+                k = state.key_cache[timestep, index_layer, index_head]
 
                 # Calculate the attention score as the dot product of q and k
                 score = sum(q[i] * k[i] for i in range(head_size))
                 score /= math.sqrt(head_size)
 
                 # Save the score to the attention buffer
-                state.att[index_head, t] = score
+                state.att[index_head, timestep] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
             state.att[index_head] = softmax(state.att[index_head], step_count + 1)
 
             # Weighted sum of the values, store back into xb
             state.xb[index_head * head_size: (index_head + 1) * head_size] = [0.0] * head_size
-            for t in range(step_count + 1):
-                # Get the value vector for this head and at this timestep
-                v = state.value_cache[t, index_layer, index_head]
-                # Get the attention weight for this timestep
-                a = state.att[index_head][t]
+            for timestep in range(step_count + 1):
+                value_vector = state.value_cache[timestep, index_layer, index_head]
+                attention_weight: numpy.float64 = state.att[index_head, timestep]
                 # Accumulate the weighted value into xb
                 for head_item_index in range(head_size):
-                    state.xb[index_head * head_size + head_item_index] += a * v[head_item_index]
+                    state.xb[index_head * head_size + head_item_index] += attention_weight * value_vector[head_item_index]
 
         # Final matrix multiplication to get the output of the attention
         state.xb2 = numpy.dot(network.weighting.wo[index_layer], state.xb)
@@ -200,20 +197,14 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
         # Residual connection back into x
         state.x = numpy.add(state.x, state.xb2)
 
-        # FFN rmsnorm
+        # Feed-forward Neural Network
         state.xb = rmsnorm(state.x, network.weighting.rms_ffn_weight[index_layer])
 
-        # Calculate self.w1(x) and self.w3(x) for FFN
         state.hb = numpy.dot(network.weighting.w1[index_layer], state.xb)
         state.hb2 = numpy.dot(network.weighting.w3[index_layer], state.xb)
 
-        # Apply SiLU activation function (silu(x) = x * sigmoid(x))
-        state.hb = [state.hb[i] * (1.0 / (1.0 + math.exp(-state.hb[i]))) for i in range(hidden_dim)]
-
-        # Elementwise multiply with w3(x)
-        state.hb = [state.hb[i] * state.hb2[i] for i in range(hidden_dim)]
-
-        # Final matrix multiplication to get the output of the FFN
+        sigmoid_linear_unit = numpy.vectorize(lambda value: value / (1. + math.exp(-value)))
+        state.hb = numpy.multiply(sigmoid_linear_unit(state.hb), state.hb2)
         state.xb = numpy.dot(network.weighting.w2[index_layer], state.hb)
 
         # Residual connection
@@ -359,8 +350,8 @@ def _load_network(file: BinaryIO) -> Network:
     network_config_file = file.read(struct.calcsize('7i'))
     # Unpacking the data
     dim, hidden_dim, n_layers, n_heads, n_kv_heads, vocab_size, seq_len = struct.unpack('7i', network_config_file)
-    # Creating a Config object
     network = Network(dim, hidden_dim, n_layers, n_heads, n_kv_heads, vocab_size, seq_len)
+    logging.info(f"created network: {network}")
     network.vocab_size = abs(network.vocab_size)
     network.weighting = checkpoint_init_weights(network, file)
     return network
@@ -373,11 +364,11 @@ def _make_init_state(network: Network) -> RunState:
     state.xb2 = numpy.zeros(shape=network.dim)
     state.hb = numpy.zeros(shape=network.hidden_dim)
     state.hb2 = numpy.zeros(shape=network.hidden_dim)
-    state.q = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
-    state.k = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
-    state.v = numpy.zeros(shape=(network.n_heads, network.dim // network.n_heads))
-    state.att = numpy.zeros(shape=(network.n_heads, network.seq_len))
+    state.q = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.k = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.v = numpy.zeros(shape=(network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.att = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
     state.logits = numpy.zeros(shape=network.vocab_size)
-    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.n_heads, network.dim // network.n_heads))
-    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.n_heads, network.dim // network.n_heads))
+    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.dim // network.num_attention_heads))
+    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.dim // network.num_attention_heads))
     return state
