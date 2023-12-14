@@ -25,7 +25,6 @@ class TransformerWeighting:
     rms_final_weight: NDArray = None
     freq_cis_real: NDArray[numpy.float64] = None
     freq_cis_imag: NDArray[numpy.float64] = None
-    wcls: NDArray = None
 
 
 @dataclass
@@ -46,45 +45,36 @@ class Network:
 
 @dataclass
 class RunState:
-    x: NDArray = None
-    xb: NDArray = None
-    q: NDArray = None
-    k: NDArray = None
-    v: NDArray = None
-    att: NDArray = None
-    key_cache: NDArray = None
-    value_cache: NDArray = None
-    xb2: NDArray = None
-    hb: NDArray = None
-    hb2: NDArray = None
-    logits: NDArray = None
+    att: NDArray = None  # scores/attention values (n_heads, seq_len)
+    key_cache: NDArray = None  # (layer, seq_len, dim)
+    value_cache: NDArray = None  # (layer, seq_len, dim)
 
 
 def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighting:
-    def read_floats(count: int) -> NDArray:
+    def read_as_array(count: int) -> NDArray:
         return numpy.array(struct.unpack(f'{count}f', file.read(count * 4)))
 
-    def read_floats_as_array2(nrows: int, ncols: int) -> NDArray:
+    def read_as_array2(nrows: int, ncols: int) -> NDArray:
         return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4))).reshape((nrows, ncols))
 
-    def read_floats_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray:
-        return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))).reshape((ndepth, ncols, nrows))
+    def read_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray:
+        return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))).reshape(
+            (ndepth, ncols, nrows))
 
     weights = TransformerWeighting()
-    weights.token_embedding_table = read_floats_as_array2(conf.vocab_size, conf.dim)
-    weights.rms_att_weight = read_floats_as_array2(conf.n_layers, conf.dim)
-    weights.wq = read_floats_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wk = read_floats_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wv = read_floats_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wo = read_floats_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.rms_ffn_weight = read_floats_as_array2(conf.n_layers, conf.dim)
-    weights.w1 = read_floats_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
-    weights.w2 = read_floats_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
-    weights.w3 = read_floats_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
-    weights.rms_final_weight = read_floats(conf.dim)
-    weights.freq_cis_real = read_floats_as_array2(conf.seq_len, (conf.dim // conf.num_attention_heads) // 2)
-    weights.freq_cis_imag = read_floats_as_array2(conf.seq_len, (conf.dim // conf.num_attention_heads) // 2)
-    weights.wcls = weights.token_embedding_table
+    weights.token_embedding_table = read_as_array2(conf.vocab_size, conf.dim)
+    weights.rms_att_weight = read_as_array2(conf.n_layers, conf.dim)
+    weights.wq = read_as_array3(conf.n_layers, conf.dim, conf.dim)
+    weights.wk = read_as_array3(conf.n_layers, conf.dim, conf.dim)
+    weights.wv = read_as_array3(conf.n_layers, conf.dim, conf.dim)
+    weights.wo = read_as_array3(conf.n_layers, conf.dim, conf.dim)
+    weights.rms_ffn_weight = read_as_array2(conf.n_layers, conf.dim)
+    weights.w1 = read_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
+    weights.w2 = read_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
+    weights.w3 = read_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
+    weights.rms_final_weight = read_as_array(conf.dim)
+    weights.freq_cis_real = read_as_array2(conf.seq_len, conf.head_dimension // 2)
+    weights.freq_cis_imag = read_as_array2(conf.seq_len, conf.head_dimension // 2)
     return weights
 
 
@@ -101,7 +91,7 @@ def tokenizer_init(file: BinaryIO, size: int) -> Tuple[List[str], List[float], i
     return vocab, vocab_scores, max_token_length
 
 
-def rmsnorm(x: NDArray, weight: NDArray) -> NDArray:
+def rms_norm(x: NDArray, weight: NDArray) -> NDArray:
     # calculate sum of squares
     ss = numpy.divide(numpy.sum(numpy.power(x, 2)), len(x)) + 1e-5
     # normalize and scale
@@ -114,33 +104,32 @@ def softmax(values: NDArray, size: int) -> NDArray:
     return numpy.divide(exp_values, numpy.sum(exp_values))
 
 
-# token, pos, config, state, weights
-def transformer(token: int, step_count: int, network: Network, state: RunState) -> None:
-    # Copy the token embedding into x
-    state.x = network.weighting.token_embedding_table[token]
+def transformer(token_code: int, step_count: int, network: Network, state: RunState) -> NDArray[numpy.float64]:
+    # getting the token embedding
+    token = network.weighting.token_embedding_table[token_code]
 
-    # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
+    # plucking out the current row of freq_cis_real and freq_cis_imag
     freq_cis_real_row: NDArray[numpy.float64] = network.weighting.freq_cis_real[step_count]
     freq_cis_imag_row: NDArray[numpy.float64] = network.weighting.freq_cis_imag[step_count]
 
-    # Forward all the layers
+    # forwarding all the layers
     for index_layer in range(network.n_layers):
         # Attention rmsnorm
-        state.xb = rmsnorm(state.x, network.weighting.rms_att_weight[index_layer])
+        residual_branch_activation = rms_norm(token, network.weighting.rms_att_weight[index_layer])
 
         # QKV matmuls for this position
         w = network.weighting.wq[index_layer]
-        state.q = numpy.dot(w, state.xb).reshape(network.num_attention_heads, network.head_dimension)
+        heads_q = numpy.dot(w, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
         w1 = network.weighting.wk[index_layer]
-        state.k = numpy.dot(w1, state.xb).reshape(network.num_attention_heads, network.head_dimension)
+        heads_k = numpy.dot(w1, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
         w2 = network.weighting.wv[index_layer]
-        state.v = numpy.dot(w2, state.xb).reshape(network.num_attention_heads, network.head_dimension)
+        heads_v = numpy.dot(w2, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for index_head in range(network.num_attention_heads):
             # Get the q and k vectors for this head
-            query_vector = state.q[index_head]
-            key_vector = state.k[index_head]
+            query_vector = heads_q[index_head]
+            key_vector = heads_k[index_head]
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for head_item_index in range(0, network.head_dimension, 2):
@@ -153,18 +142,18 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
                 key_vector[head_item_index] = k0 * fcr - k1 * fci
                 key_vector[head_item_index + 1] = k0 * fci + k1 * fcr
 
-            # reassigned back to state.q and state.k
-            state.q[index_head] = query_vector
-            state.k[index_head] = key_vector
+            # reassigned back to Q and K
+            heads_q[index_head] = query_vector
+            heads_k[index_head] = key_vector
 
         # Save key,value at this time step (pos) to our kv cache
-        state.key_cache[step_count, index_layer] = state.k
-        state.value_cache[step_count, index_layer] = state.v
+        state.key_cache[step_count, index_layer] = heads_k
+        state.value_cache[step_count, index_layer] = heads_v
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
             # Get the query vector for this head
-            query_vector = state.q[index_head]
+            query_vector = heads_q[index_head]
 
             # Iterate over all timesteps, including the current one
             for timestep in range(step_count + 1):
@@ -180,37 +169,37 @@ def transformer(token: int, step_count: int, network: Network, state: RunState) 
             # Softmax the scores to get attention weights, from 0..pos inclusively
             state.att[index_head] = softmax(state.att[index_head], step_count + 1)
 
-            # Weighted sum of the values, store back into xb
-            state.xb[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] = numpy.zeros(network.head_dimension)
+            # Weighted sum of the values, store back into residual branch activation
+            residual_branch_activation[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] = numpy.zeros(
+                network.head_dimension)
             for timestep in range(step_count + 1):
                 value_vector = state.value_cache[timestep, index_layer, index_head]
                 attention_weight: numpy.float64 = state.att[index_head, timestep]
-                state.xb[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] += numpy.multiply(value_vector, attention_weight)
+                residual_branch_activation[
+                index_head * network.head_dimension:(index_head + 1) * network.head_dimension] += numpy.multiply(
+                    value_vector, attention_weight)
 
-        # Final matrix multiplication to get the output of the attention
-        state.xb2 = numpy.dot(network.weighting.wo[index_layer], state.xb)
-
-        # Residual connection back into x
-        state.x = numpy.add(state.x, state.xb2)
+        # Final matrix multiplication to get the output of the attention and residual branch activation back into token
+        token = numpy.add(token, numpy.dot(network.weighting.wo[index_layer], residual_branch_activation))
 
         # Feed-forward Neural Network
-        state.xb = rmsnorm(state.x, network.weighting.rms_ffn_weight[index_layer])
+        residual_branch_activation = rms_norm(token, network.weighting.rms_ffn_weight[index_layer])
 
-        state.hb = numpy.dot(network.weighting.w1[index_layer], state.xb)
-        state.hb2 = numpy.dot(network.weighting.w3[index_layer], state.xb)
+        hidden_dimension_buffer1 = numpy.dot(network.weighting.w1[index_layer], residual_branch_activation)
+        hidden_dimension_buffer2 = numpy.dot(network.weighting.w3[index_layer], residual_branch_activation)
 
         sigmoid_linear_unit = numpy.vectorize(lambda value: value / (1. + math.exp(-value)))
-        state.hb = numpy.multiply(sigmoid_linear_unit(state.hb), state.hb2)
-        state.xb = numpy.dot(network.weighting.w2[index_layer], state.hb)
+        hidden_dimension_buffer1 = numpy.multiply(sigmoid_linear_unit(hidden_dimension_buffer1), hidden_dimension_buffer2)
+        residual_branch_activation = numpy.dot(network.weighting.w2[index_layer], hidden_dimension_buffer1)
 
         # Residual connection
-        state.x = numpy.add(state.x, state.xb)
+        token = numpy.add(token, residual_branch_activation)
 
     # Final rmsnorm
-    state.x = rmsnorm(state.x, network.weighting.rms_final_weight)
+    token = rms_norm(token, network.weighting.rms_final_weight)
 
     # Classifier into logits
-    state.logits = numpy.dot(network.weighting.wcls, state.x)
+    return numpy.dot(network.weighting.token_embedding_table, token)
 
 
 def str_lookup(occurrence: str, vocab: List[str]) -> int:
@@ -271,7 +260,7 @@ def sample(probabilities: NDArray) -> int:
     return numpy.argmax(r < cdf)
 
 
-def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, steps: int, prompt: str, seed: int,
+def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_steps: int, prompt: str, seed: int,
         output=sys.stdout):
     if seed is None:
         seed = int(time.time())
@@ -281,8 +270,8 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
     network = _load_network(model_file)
 
     # Right now we cannot run for more than config.seq_len steps
-    if steps <= 0 or steps > network.seq_len:
-        steps = network.seq_len
+    if max_steps <= 0 or max_steps > network.seq_len:
+        max_steps = network.seq_len
 
     vocab, vocab_scores, max_token_length = tokenizer_init(tokenizer_file, network.vocab_size)
 
@@ -294,28 +283,28 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
     start: float = 0.  # Used to time our code, only initialized after the first iteration
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     token_code: int = 1
-    pos: int = 0  # Position in the sequence
+    timestep: int = 0  # Position in the sequence
     # Explicitly print the initial BOS token for stylistic symmetry reasons
     print("<s>", flush=True, file=output)
 
-    while pos < steps:
+    while timestep < max_steps:
 
         # Forward the transformer to get logits for the next token
-        transformer(token_code, pos, network, state)
+        logits = transformer(token_code, timestep, network, state)
 
-        if pos < len(prompt_tokens):
+        if timestep < len(prompt_tokens):
             # If we are still processing the input prompt, force the next prompt token
-            next_token = prompt_tokens[pos]
+            next_token = prompt_tokens[timestep]
         elif temperature == 0.0:
             # Greedy argmax sampling: take the token with the highest probability
-            next_token = numpy.argmax(state.logits)
+            next_token = numpy.argmax(logits)
         else:
             # Apply the temperature to the logits
-            state.logits = numpy.divide(state.logits, temperature)
+            logits = numpy.divide(logits, temperature)
             # Apply softmax to the logits to get the probabilities for the next token
-            state.logits = softmax(state.logits, network.vocab_size)
+            logits = softmax(logits, network.vocab_size)
             # Sample from this distribution to get the next token
-            next_token = sample(state.logits)
+            next_token = sample(logits)
 
         # Following BOS token (1), sentencepiece decoder strips any leading whitespace
         token_str = (
@@ -330,7 +319,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
 
         # Advance forward
         token_code = next_token
-        pos += 1
+        timestep += 1
 
         # Initialize our timer here because the first iteration could be time-consuming due to IO operations
         if start == 0.:
@@ -338,7 +327,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, step
 
     # Report achieved tok/s
     end = time_in_ms()
-    logging.info(f"achieved tok/s: {(steps - 1) / (end - start) * 1000:.01f}")
+    logging.info(f"achieved tok/s: {(max_steps - 1) / (end - start) * 1000:.01f}")
 
 
 def _load_network(file: BinaryIO) -> Network:
@@ -355,16 +344,9 @@ def _load_network(file: BinaryIO) -> Network:
 
 def _make_init_state(network: Network) -> RunState:
     state = RunState()
-    state.x = numpy.zeros(shape=network.dim)
-    state.xb = numpy.zeros(shape=network.dim)
-    state.xb2 = numpy.zeros(shape=network.dim)
-    state.hb = numpy.zeros(shape=network.hidden_dim)
-    state.hb2 = numpy.zeros(shape=network.hidden_dim)
-    state.q = numpy.zeros(shape=(network.num_attention_heads, ))
-    state.k = numpy.zeros(shape=(network.num_attention_heads, network.head_dimension))
-    state.v = numpy.zeros(shape=(network.num_attention_heads, network.head_dimension))
     state.att = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
-    state.logits = numpy.zeros(shape=network.vocab_size)
-    state.key_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
-    state.value_cache = numpy.zeros(shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
+    state.key_cache = numpy.zeros(
+        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
+    state.value_cache = numpy.zeros(
+        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
     return state

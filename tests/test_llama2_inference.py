@@ -23,7 +23,7 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
 <s>
 """
             result = io.StringIO()
-            inference.run(model_file, tokenizer_file, temperature=0.8, steps=256, prompt=prompt, seed=1, output=result)
+            inference.run(model_file, tokenizer_file, temperature=0.8, max_steps=256, prompt=prompt, seed=1, output=result)
             self.assertEqual(expected, result.getvalue())
 
 
