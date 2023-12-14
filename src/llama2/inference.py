@@ -78,8 +78,8 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
     weights.w2 = read_floats_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
     weights.w3 = read_floats_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
     weights.rms_final_weight = read_floats(conf.dim)
-    weights.freq_cis_real = read_floats(conf.seq_len * (conf.dim // conf.n_heads) // 2)
-    weights.freq_cis_imag = read_floats(conf.seq_len * (conf.dim // conf.n_heads) // 2)
+    weights.freq_cis_real = read_floats_as_array2(conf.seq_len, (conf.dim // conf.n_heads) // 2)
+    weights.freq_cis_imag = read_floats_as_array2(conf.seq_len, (conf.dim // conf.n_heads) // 2)
     weights.wcls = weights.token_embedding_table
     return weights
 
@@ -111,7 +111,7 @@ def softmax(values: ArrayLike, size: int) -> ArrayLike:
 
 
 # token, pos, config, state, weights
-def transformer(token: int, pos: int, network: Network, state: RunState) -> None:
+def transformer(token: int, step_count: int, network: Network, state: RunState) -> None:
     # A few convenience variables
     dim = network.dim
     hidden_dim = network.hidden_dim
@@ -121,8 +121,8 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
     state.x = network.weighting.token_embedding_table[token]
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    freq_cis_real_row = network.weighting.freq_cis_real[pos * head_size // 2: (pos + 1) * head_size // 2]
-    freq_cis_imag_row = network.weighting.freq_cis_imag[pos * head_size // 2: (pos + 1) * head_size // 2]
+    freq_cis_real_row = network.weighting.freq_cis_real[step_count]
+    freq_cis_imag_row = network.weighting.freq_cis_imag[step_count]
 
     # Forward all the layers
     for index_layer in range(network.n_layers):
@@ -160,8 +160,8 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
 
         # Save key,value at this time step (pos) to our kv cache
         loff = index_layer * network.seq_len * dim  # kv cache layer offset for convenience
-        state.key_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.k.reshape(dim)
-        state.value_cache[loff + pos * dim: loff + (pos + 1) * dim] = state.v.reshape(dim)
+        state.key_cache[loff + step_count * dim: loff + (step_count + 1) * dim] = state.k.reshape(dim)
+        state.value_cache[loff + step_count * dim: loff + (step_count + 1) * dim] = state.v.reshape(dim)
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.n_heads):
@@ -169,7 +169,7 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
             q = state.q[index_head]
 
             # Iterate over all timesteps, including the current one
-            for t in range(pos + 1):
+            for t in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
                 k = state.key_cache[loff + t * dim + index_head * head_size: loff + (t + 1) * dim + index_head * head_size]
 
@@ -181,11 +181,11 @@ def transformer(token: int, pos: int, network: Network, state: RunState) -> None
                 state.att[index_head, t] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
-            state.att[index_head] = softmax(state.att[index_head], pos + 1)
+            state.att[index_head] = softmax(state.att[index_head], step_count + 1)
 
             # Weighted sum of the values, store back into xb
             state.xb[index_head * head_size: (index_head + 1) * head_size] = [0.0] * head_size
-            for t in range(pos + 1):
+            for t in range(step_count + 1):
                 # Get the value vector for this head and at this timestep
                 v = state.value_cache[loff + t * dim + index_head * head_size: loff + (t + 1) * dim + index_head * head_size]
                 # Get the attention weight for this timestep
