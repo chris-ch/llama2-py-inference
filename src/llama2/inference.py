@@ -23,8 +23,8 @@ class TransformerWeighting:
     w3: NDArray = None
     w2: NDArray = None
     rms_final_weight: NDArray = None
-    freq_cis_real: NDArray[numpy.float64] = None
-    freq_cis_imag: NDArray[numpy.float64] = None
+    freq_cis_real: NDArray[NDArray[numpy.float32]] = None
+    freq_cis_imag: NDArray[NDArray[numpy.float32]] = None
 
 
 @dataclass
@@ -45,20 +45,22 @@ class Network:
 
 @dataclass
 class RunState:
-    att: NDArray = None  # scores/attention values (n_heads, seq_len)
-    key_cache: NDArray = None  # (layer, seq_len, dim)
-    value_cache: NDArray = None  # (layer, seq_len, dim)
+    scores: NDArray[NDArray[numpy.float32]] = None  # scores/attention values (n_heads, seq_len)
+    key_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
+    value_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
 
 
 def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighting:
-    def read_as_array(count: int) -> NDArray:
-        return numpy.array(struct.unpack(f'{count}f', file.read(count * 4)))
+    def read_as_array(count: int) -> NDArray[numpy.float32]:
+        return numpy.array(struct.unpack(f'{count}f', file.read(count * 4)), dtype=numpy.float32)
 
-    def read_as_array2(nrows: int, ncols: int) -> NDArray:
-        return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4))).reshape((nrows, ncols))
+    def read_as_array2(nrows: int, ncols: int) -> NDArray[NDArray[numpy.float32]]:
+        return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4)),
+                           dtype=numpy.float32).reshape((nrows, ncols))
 
-    def read_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray:
-        return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))).reshape(
+    def read_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray[NDArray[NDArray[numpy.float32]]]:
+        return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4)),
+                           dtype=numpy.float32).reshape(
             (ndepth, ncols, nrows))
 
     weights = TransformerWeighting()
@@ -105,13 +107,13 @@ def softmax(values: NDArray, size: int) -> NDArray:
     return numpy.concatenate((softmax_values, values[size:]))
 
 
-def transformer(token_code: int, step_count: int, network: Network, state: RunState) -> NDArray[numpy.float64]:
+def transformer(token_code: int, step_count: int, network: Network, state: RunState) -> NDArray[numpy.float32]:
     # getting the token embedding
     token = network.weighting.token_embedding_table[token_code]
 
     # plucking out the current row of freq_cis_real and freq_cis_imag
-    freq_cis_real_row: NDArray[numpy.float64] = network.weighting.freq_cis_real[step_count]
-    freq_cis_imag_row: NDArray[numpy.float64] = network.weighting.freq_cis_imag[step_count]
+    freq_cis_real_row: NDArray[numpy.float32] = network.weighting.freq_cis_real[step_count]
+    freq_cis_imag_row: NDArray[numpy.float32] = network.weighting.freq_cis_imag[step_count]
 
     # forwarding all the layers
     for index_layer in range(network.n_layers):
@@ -136,8 +138,8 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
             for head_item_index in range(0, network.head_dimension, 2):
                 q0, q1 = query_vector[head_item_index], query_vector[head_item_index + 1]
                 k0, k1 = key_vector[head_item_index], key_vector[head_item_index + 1]
-                fcr: numpy.float64 = freq_cis_real_row[head_item_index // 2]
-                fci: numpy.float64 = freq_cis_imag_row[head_item_index // 2]
+                fcr: numpy.float32 = freq_cis_real_row[head_item_index // 2]
+                fci: numpy.float32 = freq_cis_imag_row[head_item_index // 2]
                 query_vector[head_item_index] = q0 * fcr - q1 * fci
                 query_vector[head_item_index + 1] = q0 * fci + q1 * fcr
                 key_vector[head_item_index] = k0 * fcr - k1 * fci
@@ -165,20 +167,19 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
                 score = numpy.divide(numpy.dot(query_vector, key_vector), math.sqrt(network.head_dimension))
 
                 # Save the score to the attention buffer
-                state.att[index_head, timestep] = score
+                state.scores[index_head, timestep] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
-            state.att[index_head] = softmax(state.att[index_head], step_count + 1)
+            state.scores[index_head] = softmax(state.scores[index_head], step_count + 1)
 
             # Weighted sum of the values, store back into residual branch activation
-            residual_branch_activation[index_head * network.head_dimension:(index_head + 1) * network.head_dimension] = numpy.zeros(
-                network.head_dimension)
+            head_activation = residual_branch_activation[
+                              index_head * network.head_dimension:(index_head + 1) * network.head_dimension]
+            head_activation[:] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
                 value_vector = state.value_cache[timestep, index_layer, index_head]
-                attention_weight: numpy.float64 = state.att[index_head, timestep]
-                residual_branch_activation[
-                index_head * network.head_dimension:(index_head + 1) * network.head_dimension] += numpy.multiply(
-                    value_vector, attention_weight)
+                attention_weight: numpy.float32 = state.scores[index_head, timestep]
+                head_activation[:] += numpy.multiply(value_vector, attention_weight)
 
         # Final matrix multiplication to get the output of the attention and residual branch activation back into token
         token = numpy.add(token, numpy.dot(network.weighting.wo[index_layer], residual_branch_activation))
@@ -190,7 +191,8 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
         hidden_dimension_buffer2 = numpy.dot(network.weighting.w3[index_layer], residual_branch_activation)
 
         sigmoid_linear_unit = numpy.vectorize(lambda value: value / (1. + math.exp(-value)))
-        hidden_dimension_buffer1 = numpy.multiply(sigmoid_linear_unit(hidden_dimension_buffer1), hidden_dimension_buffer2)
+        hidden_dimension_buffer1 = numpy.multiply(sigmoid_linear_unit(hidden_dimension_buffer1),
+                                                  hidden_dimension_buffer2)
         residual_branch_activation = numpy.dot(network.weighting.w2[index_layer], hidden_dimension_buffer1)
 
         # Residual connection
@@ -211,7 +213,7 @@ def str_lookup(occurrence: str, vocab: List[str]) -> int:
         return -1
 
 
-def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float64]) -> List[int]:
+def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float32]) -> List[int]:
     tokens = []
     # First encode every individual character in the input text
     for char in prompt:
@@ -225,7 +227,7 @@ def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float6
     return _process_tokens(tokens, vocab, vocab_scores)
 
 
-def _process_tokens(tokens: List[int], vocab: List[str], vocab_scores: NDArray[numpy.float64]):
+def _process_tokens(tokens: List[int], vocab: List[str], vocab_scores: NDArray[numpy.float32]) -> List[int]:
     while True:
         best_score = -1e10
         best_id = -1
@@ -281,7 +283,9 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_
     # Create and initialize the application RunState
     state = _make_init_state(network)
 
-    prompt_tokens = bpe_encode(prompt, vocab, numpy.array(vocab_scores)) if prompt else []
+    prompt_tokens: List[int] = bpe_encode(prompt, vocab,
+                                          numpy.array(vocab_scores, dtype=numpy.float32)) if prompt else numpy.array([],
+                                                                                                                     dtype=numpy.float32)
     # Start the main loop
     start: float = 0.  # Used to time our code, only initialized after the first iteration
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
@@ -347,7 +351,7 @@ def _load_network(file: BinaryIO) -> Network:
 
 def _make_init_state(network: Network) -> RunState:
     state = RunState()
-    state.att = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
+    state.scores = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
     state.key_cache = numpy.zeros(
         shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
     state.value_cache = numpy.zeros(
