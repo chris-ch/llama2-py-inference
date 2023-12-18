@@ -8,7 +8,7 @@ The external packages this version uses is limited to _numpy_: it considerably i
 Python with no dependency at all, and also better represents algebraic operations, which is always nice for educational
 purposes.
 
-The primary purpose of this library is essentially a scaffolding that will eventually help me porting _llama2.c_ into
+The primary purpose of this library is essentially a scaffolding that will eventually help me to port _llama2.c_ into
 Haskell. This has some impact on the coding style: explicitly calling functions, avoiding operators overloading and
 usage of typing as much as possible.
 
@@ -17,7 +17,7 @@ numpy as np` tradition, because I do not  like it. For aesthetics reasons first,
 generally accepted way of handling external packages in Python.
 
 _numpy_ (and _pandas_) are both exceptions, only because they are remotely related to the BLAS library (in fact the
-purpose of _numpy_ was to provide an access to that library), which was originally written in Fortran, which was
+purpose of _numpy_ was to provide access to that library), which was originally written in Fortran, which was
 originally written on punchcards, where every character was thoroughly counted indeed. So, bottom-line: I am not going
 to  shorten _numpy_ into _np_ only because someone wrote the BLAS library in Fortran in the 70s.
 
@@ -41,7 +41,7 @@ for the modules in the _src_ directory to become accessible.
 poetry run llama2 data/stories15M.bin 0.8 256 "In that small Swiss town"
 ```
 
-For testing purposes, you can set the _seed_ option to some value, so as to always get the same output:
+For testing purposes, you can set the _seed_ option to some value to always get the same output:
 
 ```shell
 poetry run llama2 --seed=1 data/stories15M.bin 0.8 256 "In that small Swiss town"
