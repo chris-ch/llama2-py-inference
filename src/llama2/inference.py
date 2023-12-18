@@ -138,8 +138,6 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
         w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
         heads_v: List[List[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
 
-        #state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
-        #state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
         updated_state = update_state(state, step_count, index_layer, heads_k, heads_v)
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
@@ -267,8 +265,6 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_
     network = _load_network(model_file)
 
     vocab, vocab_scores = tokenizer_init(tokenizer_file, network.vocab_size)
-    # Create and initialize the application RunState
-    state = _make_init_state(network)
 
     prompt_tokens: List[int] = bpe_encode(prompt, vocab,
                                           numpy.array(vocab_scores, dtype=numpy.float32)) if prompt else numpy.array([],
@@ -281,7 +277,7 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_
         max_steps = network.seq_len
 
     start = time_in_ms()
-    result = generate_tokens(network, state, max_steps, prompt_tokens, temperature, vocab, output)
+    result = generate_tokens(network, max_steps, prompt_tokens, temperature, vocab, output)
 
     # Report achieved tok/s
     end = time_in_ms()
@@ -307,10 +303,14 @@ def _make_init_state(network: Network) -> RunState:
     return state
 
 
-def generate_tokens(network: Network, state: RunState, checked_max_steps: int, prompt_tokens: List[int], temperature: float, vocab: List[str], output) -> List[str]:
+def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: List[int], temperature: float, vocab: List[str], output) -> List[str]:
     result = []
     token_code: int = 1
     timestep: int = 0  # Position in the sequence
+
+    # Create and initialize the application RunState
+    state = _make_init_state(network)
+
     while timestep < checked_max_steps:
 
         token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, state)
