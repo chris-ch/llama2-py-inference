@@ -147,11 +147,8 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
             for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
                 key_vector: NDArray[numpy.float32] = updated_state.key_cache[timestep][index_layer][index_head]
-
                 # Calculate the attention score as the dot product of q and k
                 score = numpy.divide(numpy.dot(numpy.array(heads_q[index_head]), key_vector), math.sqrt(network.head_dimension))
-                if isinstance(score, numpy.ndarray):
-                    raise ValueError('Oops')
                 # Save the score to the attention buffer
                 head_scores.append(score)
 
