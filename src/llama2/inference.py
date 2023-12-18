@@ -120,6 +120,7 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
     freq_cis_real_row: NDArray[numpy.float32] = network.weighting.freq_cis_real[step_count]
     freq_cis_imag_row: NDArray[numpy.float32] = network.weighting.freq_cis_imag[step_count]
 
+    updated_state = state
     # forwarding all the layers
     for index_layer in range(network.n_layers):
         # Attention rmsnorm
@@ -138,7 +139,7 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
         w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
         heads_v: List[List[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
 
-        updated_state = update_state(state, step_count, index_layer, heads_k, heads_v)
+        updated_state = update_state(updated_state, step_count, index_layer, heads_k, heads_v)
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
             head_scores: List[numpy.float32] = []
@@ -328,7 +329,8 @@ def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: Lis
     return result
 
 
-def generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, state) -> Tuple[str, int]:
+def generate_next_token(timestep: int, prompt_tokens: List[int], temperature: float, network: Network, vocab: List[str],
+                        token_code: int, state: RunState) -> Tuple[str, int]:
     # Forward the transformer to get logits for the next token
     logits = transformer(token_code, timestep, network, state)
 
