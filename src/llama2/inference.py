@@ -45,7 +45,6 @@ class Network:
 
 @dataclass
 class RunState:
-    scores: List[NDArray[numpy.float32]] = field(default_factory=list)
     key_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
     value_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
 
@@ -107,6 +106,12 @@ def softmax(values: NDArray, size: int) -> NDArray:
     return numpy.concatenate((softmax_values, values[size:]))
 
 
+def update_state(state: RunState, step_count: int,  index_layer: int, heads_k: List[List[numpy.float32]], heads_v: List[List[numpy.float32]]) -> RunState:
+    state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
+    state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
+    return state
+
+
 def transformer(token_code: int, step_count: int, network: Network, state: RunState) -> NDArray[numpy.float32]:
     # getting the token embedding
     token = network.weighting.token_embedding_table[token_code]
@@ -129,35 +134,38 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
         w_k = numpy.dot(network.weighting.wk[index_layer], residual_branch_activation).reshape(network.num_attention_heads,
                                                                               network.head_dimension)
         heads_k: List[List[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_k.tolist()]
-        state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
 
         w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
-        heads_v: NDArray[NDArray[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
-        state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
+        heads_v: List[List[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
 
+        #state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
+        #state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
+        updated_state = update_state(state, step_count, index_layer, heads_k, heads_v)
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
+            head_scores: List[numpy.float32] = []
             # Iterate over all timesteps, including the current one
             for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                key_vector: NDArray[numpy.float32] = state.key_cache[timestep][index_layer][index_head]
+                key_vector: NDArray[numpy.float32] = updated_state.key_cache[timestep][index_layer][index_head]
 
                 # Calculate the attention score as the dot product of q and k
                 score = numpy.divide(numpy.dot(numpy.array(heads_q[index_head]), key_vector), math.sqrt(network.head_dimension))
-
+                if isinstance(score, numpy.ndarray):
+                    raise ValueError('Oops')
                 # Save the score to the attention buffer
-                state.scores[index_head][timestep] = score
+                head_scores.append(score)
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
-            state.scores[index_head] = softmax(state.scores[index_head], step_count + 1)
+            head_scores = softmax(numpy.array(head_scores), step_count + 1).tolist()
 
             # Weighted sum of the values, store back into residual branch activation
             head_activation = residual_branch_activation[
                               index_head * network.head_dimension:(index_head + 1) * network.head_dimension]
             head_activation[:] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
-                value_vector = state.value_cache[timestep][index_layer][index_head]
-                attention_weight: numpy.float32 = state.scores[index_head][timestep]
+                value_vector = updated_state.value_cache[timestep][index_layer][index_head]
+                attention_weight: numpy.float32 = head_scores[timestep]
                 head_activation[:] += numpy.multiply(value_vector, attention_weight)
 
         # Final matrix multiplication to get the output of the attention and residual branch activation back into token
@@ -294,7 +302,6 @@ def _load_network(file: BinaryIO) -> Network:
 
 def _make_init_state(network: Network) -> RunState:
     state = RunState()
-    state.scores = [numpy.zeros(shape=network.seq_len) for _ in range(network.num_attention_heads)]
     state.key_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
     state.value_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
     return state
