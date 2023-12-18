@@ -3,7 +3,7 @@ import sys
 import time
 import math
 import struct
-from typing import List, BinaryIO, Tuple, TextIO
+from typing import List, BinaryIO, Tuple
 from dataclasses import dataclass, field
 
 import numpy
@@ -45,9 +45,9 @@ class Network:
 
 @dataclass
 class RunState:
-    scores: List[NDArray[numpy.float32]] = field(default_factory=list)
-    key_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
-    value_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
+    scores: NDArray[NDArray[numpy.float32]] = None  # scores/attention values (n_heads, seq_len)
+    key_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
+    value_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
 
 
 def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighting:
@@ -80,9 +80,9 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
     return weights
 
 
-def tokenizer_init(file: BinaryIO, size: int) -> Tuple[List[str], List[float]]:
+def tokenizer_init(file: BinaryIO, size: int) -> Tuple[List[str], List[float], int]:
     vocab, vocab_scores = [], []
-    _ = struct.unpack('i', file.read(4))[0]
+    max_token_length = struct.unpack('i', file.read(4))[0]
     for _ in range(size):
         vocab_scores.append(struct.unpack('f', file.read(4))[0])
         length = struct.unpack('i', file.read(4))[0]
@@ -90,7 +90,7 @@ def tokenizer_init(file: BinaryIO, size: int) -> Tuple[List[str], List[float]]:
         if type(bstr) is not str:
             bstr = bstr.decode('utf8')
         vocab.append(bstr)
-    return vocab, vocab_scores
+    return vocab, vocab_scores, max_token_length
 
 
 def rms_norm(x: NDArray, weight: NDArray) -> NDArray:
@@ -118,35 +118,56 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
     # forwarding all the layers
     for index_layer in range(network.n_layers):
         # Attention rmsnorm
-        residual_branch_activation: NDArray[numpy.float32] = rms_norm(token, network.weighting.rms_att_weight[index_layer])
+        residual_branch_activation = rms_norm(token, network.weighting.rms_att_weight[index_layer])
 
         # QKV matmuls for this position
+        w = network.weighting.wq[index_layer]
+        heads_q = numpy.dot(w, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
+        w1 = network.weighting.wk[index_layer]
+        heads_k = numpy.dot(w1, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
+        w2 = network.weighting.wv[index_layer]
+        heads_v = numpy.dot(w2, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
 
-        w_q: NDArray[NDArray[numpy.float32]] = numpy.dot(network.weighting.wq[index_layer], residual_branch_activation).reshape(network.num_attention_heads,
-                                                                              network.head_dimension)
-        heads_q: List[List[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_q.tolist()]
+        # Apply RoPE rotation to the q and k vectors for each head
+        for index_head in range(network.num_attention_heads):
+            # Get the q and k vectors for this head
+            query_vector = heads_q[index_head]
+            key_vector = heads_k[index_head]
 
-        w_k = numpy.dot(network.weighting.wk[index_layer], residual_branch_activation).reshape(network.num_attention_heads,
-                                                                              network.head_dimension)
-        heads_k: List[List[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_k.tolist()]
-        state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
+            # Rotate q and k by the freq_cis_real and freq_cis_imag
+            for head_item_index in range(0, network.head_dimension, 2):
+                q0, q1 = query_vector[head_item_index], query_vector[head_item_index + 1]
+                k0, k1 = key_vector[head_item_index], key_vector[head_item_index + 1]
+                fcr: numpy.float32 = freq_cis_real_row[head_item_index // 2]
+                fci: numpy.float32 = freq_cis_imag_row[head_item_index // 2]
+                query_vector[head_item_index] = q0 * fcr - q1 * fci
+                query_vector[head_item_index + 1] = q0 * fci + q1 * fcr
+                key_vector[head_item_index] = k0 * fcr - k1 * fci
+                key_vector[head_item_index + 1] = k0 * fci + k1 * fcr
 
-        w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
-        heads_v: NDArray[NDArray[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
-        state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
+            # reassigned back to Q and K
+            heads_q[index_head] = query_vector
+            heads_k[index_head] = key_vector
+
+        # Save key,value at this time step (pos) to our kv cache
+        state.key_cache[step_count, index_layer] = heads_k
+        state.value_cache[step_count, index_layer] = heads_v
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
+            # Get the query vector for this head
+            query_vector = heads_q[index_head]
+
             # Iterate over all timesteps, including the current one
             for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                key_vector: NDArray[numpy.float32] = state.key_cache[timestep][index_layer][index_head]
+                key_vector = state.key_cache[timestep, index_layer, index_head]
 
                 # Calculate the attention score as the dot product of q and k
-                score = numpy.divide(numpy.dot(numpy.array(heads_q[index_head]), key_vector), math.sqrt(network.head_dimension))
+                score = numpy.divide(numpy.dot(query_vector, key_vector), math.sqrt(network.head_dimension))
 
                 # Save the score to the attention buffer
-                state.scores[index_head][timestep] = score
+                state.scores[index_head, timestep] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
             state.scores[index_head] = softmax(state.scores[index_head], step_count + 1)
@@ -156,8 +177,8 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
                               index_head * network.head_dimension:(index_head + 1) * network.head_dimension]
             head_activation[:] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
-                value_vector = state.value_cache[timestep][index_layer][index_head]
-                attention_weight: numpy.float32 = state.scores[index_head][timestep]
+                value_vector = state.value_cache[timestep, index_layer, index_head]
+                attention_weight: numpy.float32 = state.scores[index_head, timestep]
                 head_activation[:] += numpy.multiply(value_vector, attention_weight)
 
         # Final matrix multiplication to get the output of the attention and residual branch activation back into token
@@ -184,24 +205,22 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
     return numpy.dot(network.weighting.token_embedding_table, token)
 
 
-def apply_rotations(network: Network, head: List[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
-                    freq_cis_imag_row: NDArray[numpy.float32]) -> List[numpy.float32]:
-    result = []
-    for head_item_index in range(0, network.head_dimension, 2):
-        real = freq_cis_real_row[head_item_index // 2]
-        imag = freq_cis_imag_row[head_item_index // 2]
-        value = head[head_item_index]
-        value_next = head[head_item_index + 1]
-        result.append(value * real - value_next * imag)
-        result.append(value * imag + value_next * real)
-    return result
+def str_lookup(occurrence: str, vocab: List[str]) -> int:
+    # Find the first perfect match for string in vocab, return its index or -1 if not found
+    try:
+        return vocab.index(occurrence)
+    except ValueError:
+        return -1
 
 
 def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float32]) -> List[int]:
     tokens = []
     # First encode every individual character in the input text
     for char in prompt:
-        pos = vocab.index(char)
+        pos = str_lookup(char, vocab)
+        if pos == -1:
+            logging.error(f"not a good prompt at index {pos}")
+            sys.exit(1)
         tokens.append(pos)
 
     # Merge the best consecutive pair each iteration, according to the scores in vocab_scores
@@ -218,10 +237,7 @@ def _process_tokens(tokens: List[int], vocab: List[str], vocab_scores: NDArray[n
             token_prev, token_next = token_pair
             # Check if we can merge the pair (tokens[i], tokens[i+1])
             merged_tokens = vocab[token_prev] + vocab[token_next]
-            try:
-                pos = vocab.index(merged_tokens)
-            except ValueError:
-                pos = -1
+            pos = str_lookup(merged_tokens, vocab)
             if pos != -1 and vocab_scores[pos] > best_score:
                 # This merge pair exists in vocab! Record its score and position
                 best_score = vocab_scores[pos]
@@ -243,14 +259,14 @@ def time_in_ms() -> float:
     return int(time.time() * 1000)
 
 
-def draw_sample(probabilities: NDArray) -> int:
+def sample(probabilities: NDArray) -> int:
     r = numpy.random.random()
     cdf = numpy.cumsum(probabilities)
     return numpy.argmax(r < cdf)
 
 
 def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_steps: int, prompt: str, seed: int,
-        output: TextIO = sys.stdout):
+        output=sys.stdout):
     if seed is None:
         seed = int(time.time())
     numpy.random.seed(seed)
@@ -258,22 +274,63 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_
     # Read in the model.bin file
     network = _load_network(model_file)
 
-    vocab, vocab_scores = tokenizer_init(tokenizer_file, network.vocab_size)
+    # Right now we cannot run for more than config.seq_len steps
+    if max_steps <= 0 or max_steps > network.seq_len:
+        max_steps = network.seq_len
+
+    vocab, vocab_scores, max_token_length = tokenizer_init(tokenizer_file, network.vocab_size)
+
     # Create and initialize the application RunState
     state = _make_init_state(network)
 
     prompt_tokens: List[int] = bpe_encode(prompt, vocab,
                                           numpy.array(vocab_scores, dtype=numpy.float32)) if prompt else numpy.array([],
                                                                                                                      dtype=numpy.float32)
+    # Start the main loop
+    start: float = 0.  # Used to time our code, only initialized after the first iteration
+    # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
+    token_code: int = 1
+    timestep: int = 0  # Position in the sequence
     # Explicitly print the initial BOS token for stylistic symmetry reasons
     print("<s>", flush=True, file=output)
 
-    # Right now we cannot run for more than config.seq_len steps
-    if max_steps <= 0 or max_steps > network.seq_len:
-        max_steps = network.seq_len
+    while timestep < max_steps:
 
-    start = time_in_ms()
-    result = generate_tokens(network, state, max_steps, prompt_tokens, temperature, vocab, output)
+        # Forward the transformer to get logits for the next token
+        logits = transformer(token_code, timestep, network, state)
+
+        if timestep < len(prompt_tokens):
+            # If we are still processing the input prompt, force the next prompt token
+            next_token = prompt_tokens[timestep]
+        elif temperature == 0.0:
+            # Greedy argmax sampling: take the token with the highest probability
+            next_token = numpy.argmax(logits)
+        else:
+            # Apply the temperature to the logits
+            logits = numpy.divide(logits, temperature)
+            # Apply softmax to the logits to get the probabilities for the next token
+            logits = softmax(logits, network.vocab_size)
+            # Sample from this distribution to get the next token
+            next_token = sample(logits)
+
+        # Following BOS token (1), sentencepiece decoder strips any leading whitespace
+        token_str = (
+            vocab[next_token].lstrip()
+            if token_code == 1 and vocab[next_token][0] == ' ' else vocab[next_token]
+        )
+
+        print(token_str, end="", flush=True, file=output)
+
+        if next_token == 1:
+            break
+
+        # Advance forward
+        token_code = next_token
+        timestep += 1
+
+        # Initialize our timer here because the first iteration could be time-consuming due to IO operations
+        if start == 0.:
+            start = time_in_ms()
 
     # Report achieved tok/s
     end = time_in_ms()
@@ -294,52 +351,9 @@ def _load_network(file: BinaryIO) -> Network:
 
 def _make_init_state(network: Network) -> RunState:
     state = RunState()
-    state.scores = [numpy.zeros(shape=network.seq_len) for _ in range(network.num_attention_heads)]
-    state.key_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
-    state.value_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
+    state.scores = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
+    state.key_cache = numpy.zeros(
+        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
+    state.value_cache = numpy.zeros(
+        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
     return state
-
-
-def generate_tokens(network: Network, state: RunState, checked_max_steps: int, prompt_tokens: List[int], temperature: float, vocab: List[str], output) -> List[str]:
-    result = []
-    token_code: int = 1
-    timestep: int = 0  # Position in the sequence
-    while timestep < checked_max_steps:
-
-        token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, state)
-        result.append(token_str)
-
-        print(token_str, end="", flush=True, file=output)
-
-        if next_token == 1:
-            break
-
-        # Advance forward
-        token_code = next_token
-        timestep += 1
-
-    return result
-
-
-def generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, state) -> Tuple[str, int]:
-    # Forward the transformer to get logits for the next token
-    logits = transformer(token_code, timestep, network, state)
-
-    if timestep < len(prompt_tokens):
-        # If we are still processing the input prompt, force the next prompt token
-        next_token = prompt_tokens[timestep]
-    elif temperature == 0.0:
-        # Greedy argmax sampling: take the token with the highest probability
-        next_token = numpy.argmax(logits)
-    else:
-        # Apply the temperature to the logits
-        # Apply softmax to the logits to get the probabilities for the next token
-        # Sample from this distribution to get the next token
-        next_token = draw_sample(softmax(numpy.divide(logits, temperature), network.vocab_size))
-
-    # Following BOS token (1), sentencepiece decoder strips any leading whitespace
-    token_str = (
-        vocab[next_token].lstrip()
-        if token_code == 1 and vocab[next_token][0] == ' ' else vocab[next_token]
-    )
-    return token_str, next_token
