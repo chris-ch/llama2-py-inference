@@ -1,4 +1,3 @@
-import itertools
 import logging
 import sys
 import time
@@ -46,9 +45,9 @@ class Network:
 
 @dataclass
 class RunState:
-    scores: NDArray[NDArray[numpy.float32]] = None  # scores/attention values (n_heads, seq_len)
-    key_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
-    value_cache: NDArray[NDArray[NDArray[numpy.float32]]] = None  # (layer, seq_len, dim)
+    scores: List[NDArray[numpy.float32]] = field(default_factory=list)
+    key_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
+    value_cache: List[List[List[NDArray[numpy.float32]]]] = field(default_factory=list)
 
 
 def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighting:
@@ -119,32 +118,35 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
     # forwarding all the layers
     for index_layer in range(network.n_layers):
         # Attention rmsnorm
-        residual_branch_activation = rms_norm(token, network.weighting.rms_att_weight[index_layer])
+        residual_branch_activation: NDArray[numpy.float32] = rms_norm(token, network.weighting.rms_att_weight[index_layer])
 
         # QKV matmuls for this position
-        w_q = network.weighting.wq[index_layer]
-        heads_q = apply_rotations(network, freq_cis_real_row, freq_cis_imag_row, residual_branch_activation, w_q)
 
-        w_k = network.weighting.wk[index_layer]
-        heads_k = apply_rotations(network, freq_cis_real_row, freq_cis_imag_row, residual_branch_activation, w_k)
-        state.key_cache[step_count, index_layer] = heads_k
+        w_q: NDArray[NDArray[numpy.float32]] = numpy.dot(network.weighting.wq[index_layer], residual_branch_activation).reshape(network.num_attention_heads,
+                                                                              network.head_dimension)
+        heads_q: List[List[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_q.tolist()]
 
-        w_v = network.weighting.wv[index_layer]
-        heads_v = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
-        state.value_cache[step_count, index_layer] = heads_v
+        w_k = numpy.dot(network.weighting.wk[index_layer], residual_branch_activation).reshape(network.num_attention_heads,
+                                                                              network.head_dimension)
+        heads_k: List[List[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_k.tolist()]
+        state.key_cache[step_count][index_layer] = [numpy.array(head) for head in heads_k]
+
+        w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
+        heads_v: NDArray[NDArray[numpy.float32]] = numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension).tolist()
+        state.value_cache[step_count][index_layer] = [numpy.array(head) for head in heads_v]
 
         # Multihead attention. Iterate over all heads
         for index_head in range(network.num_attention_heads):
             # Iterate over all timesteps, including the current one
             for timestep in range(step_count + 1):
                 # Get the key vector for this head and at this timestep
-                key_vector = state.key_cache[timestep, index_layer, index_head]
+                key_vector: NDArray[numpy.float32] = state.key_cache[timestep][index_layer][index_head]
 
                 # Calculate the attention score as the dot product of q and k
-                score = numpy.divide(numpy.dot(heads_q[index_head], key_vector), math.sqrt(network.head_dimension))
+                score = numpy.divide(numpy.dot(numpy.array(heads_q[index_head]), key_vector), math.sqrt(network.head_dimension))
 
                 # Save the score to the attention buffer
-                state.scores[index_head, timestep] = score
+                state.scores[index_head][timestep] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
             state.scores[index_head] = softmax(state.scores[index_head], step_count + 1)
@@ -154,8 +156,8 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
                               index_head * network.head_dimension:(index_head + 1) * network.head_dimension]
             head_activation[:] = numpy.zeros(network.head_dimension)
             for timestep in range(step_count + 1):
-                value_vector = state.value_cache[timestep, index_layer, index_head]
-                attention_weight: numpy.float32 = state.scores[index_head, timestep]
+                value_vector = state.value_cache[timestep][index_layer][index_head]
+                attention_weight: numpy.float32 = state.scores[index_head][timestep]
                 head_activation[:] += numpy.multiply(value_vector, attention_weight)
 
         # Final matrix multiplication to get the output of the attention and residual branch activation back into token
@@ -182,33 +184,17 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
     return numpy.dot(network.weighting.token_embedding_table, token)
 
 
-def apply_rotations(network, freq_cis_real_row: NDArray[numpy.float32],
-                    freq_cis_imag_row: NDArray[numpy.float32],
-                    residual_branch_activation: NDArray[numpy.float32],
-                    weights: NDArray[NDArray[numpy.float32]]) -> NDArray[NDArray[numpy.float32]]:
-    heads_values = numpy.dot(weights, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)
-    # Apply RoPE rotation to the q and k vectors for each head
-    for index_head, head_item_index in itertools.product(range(network.num_attention_heads),
-                                                         range(0, network.head_dimension, 2)):
-        head, head_next = perform_rope_rotation(
-            freq_cis_real_row[head_item_index // 2],
-            freq_cis_imag_row[head_item_index // 2],
-            heads_values[index_head][head_item_index],
-            heads_values[index_head][head_item_index + 1]
-        )
-        heads_values[index_head][head_item_index] = head
-        heads_values[index_head][head_item_index + 1] = head_next
-    return heads_values
-
-
-def perform_rope_rotation(freq_cis_real: numpy.float32,
-                          freq_cis_imag: numpy.float32,
-                          head_value: numpy.float32,
-                          head_value_next: numpy.float32,
-                          ) -> Tuple[numpy.float32, numpy.float32]:
-    updated_head_q = head_value * freq_cis_real - head_value_next * freq_cis_imag
-    updated_head_q_next = head_value * freq_cis_imag + head_value_next * freq_cis_real
-    return updated_head_q, updated_head_q_next
+def apply_rotations(network: Network, head: List[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
+                    freq_cis_imag_row: NDArray[numpy.float32]) -> List[numpy.float32]:
+    result = []
+    for head_item_index in range(0, network.head_dimension, 2):
+        real = freq_cis_real_row[head_item_index // 2]
+        imag = freq_cis_imag_row[head_item_index // 2]
+        value = head[head_item_index]
+        value_next = head[head_item_index + 1]
+        result.append(value * real - value_next * imag)
+        result.append(value * imag + value_next * real)
+    return result
 
 
 def bpe_encode(prompt: str, vocab: List[str], vocab_scores: NDArray[numpy.float32]) -> List[int]:
@@ -264,7 +250,7 @@ def draw_sample(probabilities: NDArray) -> int:
 
 
 def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_steps: int, prompt: str, seed: int,
-        output: TextIO=sys.stdout):
+        output: TextIO = sys.stdout):
     if seed is None:
         seed = int(time.time())
     numpy.random.seed(seed)
@@ -279,11 +265,6 @@ def run(model_file: BinaryIO, tokenizer_file: BinaryIO, temperature: float, max_
     prompt_tokens: List[int] = bpe_encode(prompt, vocab,
                                           numpy.array(vocab_scores, dtype=numpy.float32)) if prompt else numpy.array([],
                                                                                                                      dtype=numpy.float32)
-    # Start the main loop
-    start: float = 0.  # Used to time our code, only initialized after the first iteration
-    # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
-    token_code: int = 1
-    timestep: int = 0  # Position in the sequence
     # Explicitly print the initial BOS token for stylistic symmetry reasons
     print("<s>", flush=True, file=output)
 
@@ -313,11 +294,9 @@ def _load_network(file: BinaryIO) -> Network:
 
 def _make_init_state(network: Network) -> RunState:
     state = RunState()
-    state.scores = numpy.zeros(shape=(network.num_attention_heads, network.seq_len))
-    state.key_cache = numpy.zeros(
-        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
-    state.value_cache = numpy.zeros(
-        shape=(network.seq_len, network.n_layers, network.num_attention_heads, network.head_dimension))
+    state.scores = [numpy.zeros(shape=network.seq_len) for _ in range(network.num_attention_heads)]
+    state.key_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
+    state.value_cache = [[numpy.zeros(shape=(network.seq_len, network.num_attention_heads, network.head_dimension)) for _ in range(network.n_layers)] for _ in range(network.seq_len)]
     return state
 
 
