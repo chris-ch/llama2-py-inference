@@ -170,38 +170,38 @@ def compute_delta_qkv(network: Network, state: RunState, step_count: int, index_
     )
     state.key_cache[step_count].append(heads_k)
     state.value_cache[step_count].append(heads_v)
-    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, step_count, index_layer, state, heads_q)
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, state, heads_q)
     return numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
 
 
-def multihead_activation(network: Network, step_count: int, index_layer: int, state: RunState, heads_q: List[NDArray[numpy.float32]]) -> NDArray[NDArray[numpy.float32]]:
+def multihead_activation(network: Network, index_layer: int, state: RunState, heads_q: List[NDArray[numpy.float32]]) -> NDArray[NDArray[numpy.float32]]:
     activations = []
     # Multihead attention. Iterate over all heads
     for index_head in range(network.num_attention_heads):
-        head_scores = compute_scores(network, state, step_count, index_layer, index_head, heads_q)
+        head_scores = compute_scores(network, state, index_layer, index_head, heads_q)
 
         # Weighted sum of the values, store back into residual branch activation
         current_activation = numpy.zeros(network.head_dimension)
-        for timestep in range(step_count + 1):
-            value_vector: NDArray[numpy.float32] = state.value_cache[timestep][index_layer][index_head]
-            attention_weight: numpy.float32 = head_scores[timestep]
+        for count, value_cache in enumerate(state.value_cache):
+            value_vector: NDArray[numpy.float32] = value_cache[index_layer][index_head]
+            attention_weight: numpy.float32 = head_scores[count]
             current_activation += numpy.multiply(value_vector, attention_weight)
         activations.append(current_activation)
     return numpy.array(activations)
 
 
-def compute_scores(network: Network, updated_state: RunState, step_count: int, index_layer: int, index_head: int, heads_q: List[NDArray[numpy.float32]]) -> List[numpy.float32]:
+def compute_scores(network: Network, state: RunState, index_layer: int, index_head: int, heads_q: List[NDArray[numpy.float32]]) -> List[numpy.float32]:
     head_scores: List[numpy.float32] = []
     # Iterate over all timesteps, including the current one
-    for timestep in range(step_count + 1):
+    for key_cache in state.key_cache:
         # Get the key vector for this head and at this timestep
-        key_vector: NDArray[numpy.float32] = updated_state.key_cache[timestep][index_layer][index_head]
+        key_vector: NDArray[numpy.float32] = key_cache[index_layer][index_head]
         # Calculate the attention score as the dot product of q and k
         score = numpy.divide(numpy.dot(heads_q[index_head], key_vector), math.sqrt(network.head_dimension))
         # Save the score to the attention buffer
         head_scores.append(score)
     # Softmax the scores to get attention weights, from 0..pos inclusively
-    head_scores = softmax(numpy.array(head_scores), step_count + 1).tolist()
+    head_scores = softmax(numpy.array(head_scores), len(head_scores)).tolist()
     return head_scores
 
 
