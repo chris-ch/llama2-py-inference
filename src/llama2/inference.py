@@ -12,17 +12,17 @@ from numpy.typing import NDArray
 
 @dataclass
 class TransformerWeighting:
-    token_embedding_table: NDArray = None
-    rms_att_weight: NDArray = None
-    wq: NDArray = None
-    wk: NDArray = None
-    wv: NDArray = None
-    wo: NDArray = None
-    rms_ffn_weight: NDArray = None
-    w1: NDArray = None
-    w3: NDArray = None
-    w2: NDArray = None
-    rms_final_weight: NDArray = None
+    token_embedding_table: NDArray[NDArray[numpy.float32]] = None
+    rms_att_weight: List[NDArray[numpy.float32]] = None
+    wq: List[NDArray[NDArray[numpy.float32]]] = None
+    wk: List[NDArray[NDArray[numpy.float32]]] = None
+    wv: List[NDArray[NDArray[numpy.float32]]] = None
+    wo: List[NDArray[NDArray[numpy.float32]]] = None
+    rms_ffn_weight: List[NDArray[numpy.float32]] = None
+    w1: List[NDArray[NDArray[numpy.float32]]] = None
+    w2: List[NDArray[NDArray[numpy.float32]]] = None
+    w3: List[NDArray[NDArray[numpy.float32]]] = None
+    rms_final_weight: NDArray[numpy.float32] = None
     freq_cis_real: List[NDArray[numpy.float32]] = None
     freq_cis_imag: List[NDArray[numpy.float32]] = None
 
@@ -53,7 +53,7 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
     def read_as_array(count: int) -> NDArray[numpy.float32]:
         return numpy.array(struct.unpack(f'{count}f', file.read(count * 4)), dtype=numpy.float32)
 
-    def read_as_array2(nrows: int, ncols: int) -> NDArray[NDArray[numpy.float32]]:
+    def read_as_matrix(nrows: int, ncols: int) -> NDArray[NDArray[numpy.float32]]:
         return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4)),
                            dtype=numpy.float32).reshape((nrows, ncols))
 
@@ -61,22 +61,21 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
         values = struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4))
         return [numpy.array(values[i:i + ncols], dtype=numpy.float32) for i in range(0, len(values), ncols)]
 
-    def read_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray[NDArray[NDArray[numpy.float32]]]:
-        return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4)),
-                           dtype=numpy.float32).reshape(
-            (ndepth, ncols, nrows))
+    def read_as_matrix_list(ndepth: int, nrows: int, ncols: int) -> List[NDArray[NDArray[numpy.float32]]]:
+        values = struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))
+        return [numpy.array(values[i:i + nrows * ncols], dtype=numpy.float32).reshape((ncols, nrows)) for i in range(0, len(values), nrows * ncols)]
 
     weights = TransformerWeighting()
-    weights.token_embedding_table = read_as_array2(conf.vocab_size, conf.dim)
-    weights.rms_att_weight = read_as_array2(conf.n_layers, conf.dim)
-    weights.wq = read_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wk = read_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wv = read_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.wo = read_as_array3(conf.n_layers, conf.dim, conf.dim)
-    weights.rms_ffn_weight = read_as_array2(conf.n_layers, conf.dim)
-    weights.w1 = read_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
-    weights.w2 = read_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
-    weights.w3 = read_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
+    weights.token_embedding_table = read_as_matrix(conf.vocab_size, conf.dim)
+    weights.rms_att_weight = read_as_vector_list(conf.n_layers, conf.dim)
+    weights.wq = read_as_matrix_list(conf.n_layers, conf.dim, conf.dim)
+    weights.wk = read_as_matrix_list(conf.n_layers, conf.dim, conf.dim)
+    weights.wv = read_as_matrix_list(conf.n_layers, conf.dim, conf.dim)
+    weights.wo = read_as_matrix_list(conf.n_layers, conf.dim, conf.dim)
+    weights.rms_ffn_weight = read_as_vector_list(conf.n_layers, conf.dim)
+    weights.w1 = read_as_matrix_list(conf.n_layers, conf.dim, conf.hidden_dim)
+    weights.w2 = read_as_matrix_list(conf.n_layers, conf.hidden_dim, conf.dim)
+    weights.w3 = read_as_matrix_list(conf.n_layers, conf.dim, conf.hidden_dim)
     weights.rms_final_weight = read_as_array(conf.dim)
     weights.freq_cis_real = read_as_vector_list(conf.seq_len, conf.head_dimension // 2)
     weights.freq_cis_imag = read_as_vector_list(conf.seq_len, conf.head_dimension // 2)
