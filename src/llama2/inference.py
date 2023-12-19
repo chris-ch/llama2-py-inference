@@ -23,8 +23,8 @@ class TransformerWeighting:
     w3: NDArray = None
     w2: NDArray = None
     rms_final_weight: NDArray = None
-    freq_cis_real: NDArray[NDArray[numpy.float32]] = None
-    freq_cis_imag: NDArray[NDArray[numpy.float32]] = None
+    freq_cis_real: List[NDArray[numpy.float32]] = None
+    freq_cis_imag: List[NDArray[numpy.float32]] = None
 
 
 @dataclass
@@ -57,6 +57,10 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
         return numpy.array(struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4)),
                            dtype=numpy.float32).reshape((nrows, ncols))
 
+    def read_as_vector_list(nrows: int, ncols: int) -> List[NDArray[numpy.float32]]:
+        values = struct.unpack(f'{nrows * ncols}f', file.read(nrows * ncols * 4))
+        return [numpy.array(values[i:i + ncols], dtype=numpy.float32) for i in range(0, len(values), ncols)]
+
     def read_as_array3(ndepth: int, nrows: int, ncols: int) -> NDArray[NDArray[NDArray[numpy.float32]]]:
         return numpy.array(struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4)),
                            dtype=numpy.float32).reshape(
@@ -74,8 +78,8 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
     weights.w2 = read_as_array3(conf.n_layers, conf.hidden_dim, conf.dim)
     weights.w3 = read_as_array3(conf.n_layers, conf.dim, conf.hidden_dim)
     weights.rms_final_weight = read_as_array(conf.dim)
-    weights.freq_cis_real = read_as_array2(conf.seq_len, conf.head_dimension // 2)
-    weights.freq_cis_imag = read_as_array2(conf.seq_len, conf.head_dimension // 2)
+    weights.freq_cis_real = read_as_vector_list(conf.seq_len, conf.head_dimension // 2)
+    weights.freq_cis_imag = read_as_vector_list(conf.seq_len, conf.head_dimension // 2)
     return weights
 
 
@@ -137,7 +141,11 @@ def transformer(token_code: int, step_count: int, network: Network, state: RunSt
         heads_k: List[NDArray[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for head in w_k.tolist()]
 
         w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
-        heads_v: List[NDArray[numpy.float32]] = [v for v in numpy.dot(w_v, residual_branch_activation).reshape(network.num_attention_heads, network.head_dimension)]
+        heads_v: List[NDArray[numpy.float32]] = list(
+            numpy.dot(w_v, residual_branch_activation).reshape(
+                network.num_attention_heads, network.head_dimension
+            )
+        )
 
         updated_state = update_state(updated_state, step_count, index_layer, heads_k, heads_v)
         # Multihead attention. Iterate over all heads
