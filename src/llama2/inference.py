@@ -136,7 +136,7 @@ def create_layer_token(network: Network, step_count: int,
     heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
     cache.key_cache[step_count].append(heads_k)
     cache.value_cache[step_count].append(heads_v)
-    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, cache, heads_q)
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, cache.key_cache, cache.value_cache, heads_q)
     delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
     # Final matrix multiplication to get the output of the attention and residual branch activation back into token
     token_new = numpy.add(token, delta_token_qkv)
@@ -181,15 +181,19 @@ def compute_qkv(network: Network,
     return heads_q, heads_k, heads_v
 
 
-def multihead_activation(network: Network, index_layer: int, cache: RunCache, heads_q: List[NDArray[numpy.float32]]) -> NDArray[NDArray[numpy.float32]]:
+def multihead_activation(network: Network,
+                         index_layer: int,
+                         key_cache: List[List[List[NDArray[numpy.float32]]]],
+                         value_cache: List[List[List[NDArray[numpy.float32]]]],
+                         heads_q: List[NDArray[numpy.float32]]) -> NDArray[NDArray[numpy.float32]]:
     activations: List[NDArray[numpy.float32]] = []
     # Multihead attention. Iterate over all heads
     for index_head in range(network.num_attention_heads):
-        raw_scores: List[numpy.float32] = compute_scores(network.head_dimension, cache.key_cache, index_layer, index_head, heads_q)
+        raw_scores: NDArray[numpy.float32] = compute_scores(network.head_dimension, key_cache, index_layer, index_head, heads_q)
         # Softmax the scores to get attention weights, from 0..pos inclusively
-        head_scores: NDArray[numpy.float32] = softmax(numpy.array(raw_scores), len(raw_scores)).tolist()
+        head_scores: NDArray[numpy.float32] = softmax(raw_scores, len(raw_scores)).tolist()
         # Weighted sum of the values, store back into residual branch activation
-        current_activation: NDArray[numpy.float32] = build_activation(network.head_dimension, index_layer, cache.value_cache, index_head, head_scores)
+        current_activation: NDArray[numpy.float32] = build_activation(network.head_dimension, index_layer, value_cache, index_head, head_scores)
         activations.append(current_activation)
     return numpy.array(activations)
 
@@ -203,7 +207,11 @@ def build_activation(dimension: int, index_layer: int, value_cache: List[List[Li
     return current_activation
 
 
-def compute_scores(head_dimension: int, key_cache: List[List[List[NDArray[numpy.float32]]]], index_layer: int, index_head: int, heads_q: List[NDArray[numpy.float32]]) -> List[numpy.float32]:
+def compute_scores(head_dimension: int,
+                   key_cache: List[List[List[NDArray[numpy.float32]]]],
+                   index_layer: int,
+                   index_head: int,
+                   heads_q: List[NDArray[numpy.float32]]) -> NDArray[numpy.float32]:
     head_scores: List[numpy.float32] = []
     # Iterate over all timesteps, including the current one
     for key_vectors in key_cache:
@@ -213,7 +221,7 @@ def compute_scores(head_dimension: int, key_cache: List[List[List[NDArray[numpy.
         score = numpy.divide(numpy.dot(heads_q[index_head], key_vector), math.sqrt(head_dimension))
         # Save the score to the attention buffer
         head_scores.append(score)
-    return head_scores
+    return numpy.array(head_scores)
 
 
 def apply_rotations(network: Network, head: List[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
