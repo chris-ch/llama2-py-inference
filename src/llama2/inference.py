@@ -129,7 +129,7 @@ def transformer(token_code: int, step_count: int, network: Network, cache: RunCa
         token = numpy.add(token, delta_token_qkv)
 
         # Feed-forward Neural Network
-        delta_token_ffn = compute_delta_ffn(network, index_layer, token)
+        delta_token_ffn = compute_delta_ffn(network.weighting, index_layer, token)
 
         # Residual connection
         token = numpy.add(token, delta_token_ffn)
@@ -141,14 +141,13 @@ def transformer(token_code: int, step_count: int, network: Network, cache: RunCa
     return numpy.dot(network.weighting.token_embedding_table, token)
 
 
-def compute_delta_ffn(network: Network, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
-    rba = rms_norm(token, network.weighting.rms_ffn_weight[index_layer])
-    hidden_dimension_buffer1 = numpy.dot(network.weighting.w1[index_layer], rba)
-    hidden_dimension_buffer2 = numpy.dot(network.weighting.w3[index_layer], rba)
+def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
+    rba = rms_norm(token, weighting.rms_ffn_weight[index_layer])
+    hidden_dimension_buffer1 = numpy.dot(weighting.w1[index_layer], rba)
+    hidden_dimension_buffer2 = numpy.dot(weighting.w3[index_layer], rba)
     sigmoid_linear_unit = numpy.vectorize(lambda value: value / (1. + math.exp(-value)))
-    hidden_dimension_buffer1 = numpy.multiply(sigmoid_linear_unit(hidden_dimension_buffer1),
-                                              hidden_dimension_buffer2)
-    return numpy.dot(network.weighting.w2[index_layer], hidden_dimension_buffer1)
+    hidden_dimension_buffer3 = numpy.multiply(sigmoid_linear_unit(hidden_dimension_buffer1), hidden_dimension_buffer2)
+    return numpy.dot(weighting.w2[index_layer], hidden_dimension_buffer3)
 
 
 def compute_qkv(network: Network,
