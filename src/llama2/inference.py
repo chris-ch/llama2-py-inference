@@ -119,26 +119,31 @@ def transformer(token_code: int, step_count: int, network: Network, cache: RunCa
 
     # forwarding all the layers
     for index_layer in range(network.n_layers):
-        heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
-        cache.key_cache[step_count].append(heads_k)
-        cache.value_cache[step_count].append(heads_v)
-        activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, cache, heads_q)
-        delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
-
-        # Final matrix multiplication to get the output of the attention and residual branch activation back into token
-        token = numpy.add(token, delta_token_qkv)
-
-        # Feed-forward Neural Network
-        delta_token_ffn = compute_delta_ffn(network.weighting, index_layer, token)
-
-        # Residual connection
-        token = numpy.add(token, delta_token_ffn)
+        token = create_layer_token(network, step_count, cache, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
 
     # Final rmsnorm
     token = rms_norm(token, network.weighting.rms_final_weight)
 
     # Classifier into logits
     return numpy.dot(network.weighting.token_embedding_table, token)
+
+
+def create_layer_token(network: Network, step_count: int,
+                       cache: RunCache, index_layer: int,
+                       freq_cis_real_row: NDArray[numpy.float32],
+                       freq_cis_imag_row: NDArray[numpy.float32],
+                       token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
+    heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
+    cache.key_cache[step_count].append(heads_k)
+    cache.value_cache[step_count].append(heads_v)
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, cache, heads_q)
+    delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
+    # Final matrix multiplication to get the output of the attention and residual branch activation back into token
+    token_new = numpy.add(token, delta_token_qkv)
+    # Feed-forward Neural Network
+    delta_token_ffn = compute_delta_ffn(network.weighting, index_layer, token_new)
+    # Residual connection
+    return numpy.add(token_new, delta_token_ffn)
 
 
 def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
@@ -180,7 +185,7 @@ def multihead_activation(network: Network, index_layer: int, cache: RunCache, he
     activations: List[NDArray[numpy.float32]] = []
     # Multihead attention. Iterate over all heads
     for index_head in range(network.num_attention_heads):
-        raw_scores: List[numpy.float32] = compute_scores(network.head_dimension, cache, index_layer, index_head, heads_q)
+        raw_scores: List[numpy.float32] = compute_scores(network.head_dimension, cache.key_cache, index_layer, index_head, heads_q)
         # Softmax the scores to get attention weights, from 0..pos inclusively
         head_scores: NDArray[numpy.float32] = softmax(numpy.array(raw_scores), len(raw_scores)).tolist()
         # Weighted sum of the values, store back into residual branch activation
@@ -198,12 +203,12 @@ def build_activation(dimension: int, index_layer: int, value_cache: List[List[Li
     return current_activation
 
 
-def compute_scores(head_dimension: int, cache: RunCache, index_layer: int, index_head: int, heads_q: List[NDArray[numpy.float32]]) -> List[numpy.float32]:
+def compute_scores(head_dimension: int, key_cache: List[List[List[NDArray[numpy.float32]]]], index_layer: int, index_head: int, heads_q: List[NDArray[numpy.float32]]) -> List[numpy.float32]:
     head_scores: List[numpy.float32] = []
     # Iterate over all timesteps, including the current one
-    for key_cache in cache.key_cache:
+    for key_vectors in key_cache:
         # Get the key vector for this head and at this timestep
-        key_vector: NDArray[numpy.float32] = key_cache[index_layer][index_head]
+        key_vector: NDArray[numpy.float32] = key_vectors[index_layer][index_head]
         # Calculate the attention score as the dot product of q and k
         score = numpy.divide(numpy.dot(heads_q[index_head], key_vector), math.sqrt(head_dimension))
         # Save the score to the attention buffer
