@@ -109,7 +109,10 @@ def softmax(values: NDArray, size: int) -> NDArray:
     return numpy.concatenate((softmax_values, values[size:]))
 
 
-def transformer(token_code: int, step_count: int, network: Network, cache: RunCache) -> NDArray[numpy.float32]:
+def transformer(token_code: int,
+                step_count: int,
+                network: Network,
+                cache: RunCache) -> NDArray[numpy.float32]:
     # getting the token embedding
     token: NDArray[numpy.float32] = network.weighting.token_embedding_table[token_code]
 
@@ -117,9 +120,10 @@ def transformer(token_code: int, step_count: int, network: Network, cache: RunCa
     freq_cis_real_row: NDArray[numpy.float32] = network.weighting.freq_cis_real[step_count]
     freq_cis_imag_row: NDArray[numpy.float32] = network.weighting.freq_cis_imag[step_count]
 
+    key_cache, value_cache = cache.key_cache, cache.value_cache
     # forwarding all the layers
     for index_layer in range(network.n_layers):
-        token = create_layer_token(network, step_count, cache, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
+        token, key_cache, value_cache = create_layer_token(network, step_count, key_cache, value_cache, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
 
     # Final rmsnorm
     token = rms_norm(token, network.weighting.rms_final_weight)
@@ -129,21 +133,27 @@ def transformer(token_code: int, step_count: int, network: Network, cache: RunCa
 
 
 def create_layer_token(network: Network, step_count: int,
-                       cache: RunCache, index_layer: int,
+                       key_cache: List[List[List[NDArray[numpy.float32]]]],
+                       value_cache: List[List[List[NDArray[numpy.float32]]]],
+                       index_layer: int,
                        freq_cis_real_row: NDArray[numpy.float32],
                        freq_cis_imag_row: NDArray[numpy.float32],
-                       token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
+                       token: NDArray[numpy.float32]) -> Tuple[NDArray[numpy.float32], List[List[List[NDArray[numpy.float32]]]], List[List[List[NDArray[numpy.float32]]]]]:
     heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
-    cache.key_cache[step_count].append(heads_k)
-    cache.value_cache[step_count].append(heads_v)
-    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, cache.key_cache, cache.value_cache, heads_q)
+    new_key_cache_step = key_cache[step_count] + [heads_k]
+    new_value_cache_step = value_cache[step_count] + [heads_v]
+    new_key_cache = key_cache  # should copy in the case of Haskell
+    new_value_cache = value_cache  # should copy in the case of Haskell
+    new_key_cache[step_count] = new_key_cache_step
+    new_value_cache[step_count] = new_value_cache_step
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, new_key_cache, new_value_cache, heads_q)
     delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
     # Final matrix multiplication to get the output of the attention and residual branch activation back into token
     token_new = numpy.add(token, delta_token_qkv)
     # Feed-forward Neural Network
     delta_token_ffn = compute_delta_ffn(network.weighting, index_layer, token_new)
     # Residual connection
-    return numpy.add(token_new, delta_token_ffn)
+    return numpy.add(token_new, delta_token_ffn), new_key_cache, new_value_cache
 
 
 def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
