@@ -176,11 +176,11 @@ def compute_qkv(network: Network,
     w_q: NDArray[NDArray[numpy.float32]] = numpy.dot(network.weighting.wq[index_layer], rba).reshape(
         network.num_attention_heads,
         network.head_dimension)
-    heads_q: List[NDArray[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for
+    heads_q: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row) for
                                              head in w_q.tolist()]
     w_k = numpy.dot(network.weighting.wk[index_layer], rba).reshape(network.num_attention_heads,
                                                                      network.head_dimension)
-    heads_k: List[NDArray[numpy.float32]] = [apply_rotations(network, head, freq_cis_real_row, freq_cis_imag_row) for
+    heads_k: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row) for
                                              head in w_k.tolist()]
     w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
     heads_v: List[NDArray[numpy.float32]] = list(
@@ -234,10 +234,10 @@ def compute_scores(head_dimension: int,
     return numpy.array(head_scores)
 
 
-def apply_rotations(network: Network, head: List[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
+def apply_rotations(head: NDArray[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
                     freq_cis_imag_row: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
     result = []
-    for head_item_index in range(0, network.head_dimension, 2):
+    for head_item_index in range(0, head.size, 2):
         real = freq_cis_real_row[head_item_index // 2]
         imag = freq_cis_imag_row[head_item_index // 2]
         value = head[head_item_index]
