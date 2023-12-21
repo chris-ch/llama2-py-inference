@@ -11,33 +11,33 @@ from numpy.typing import NDArray
 from llama2 import inference
 from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv
 
-_random_magic_number = 0xDEADBEEF
-
-
-def custom_seed(seed: int) -> None:
-    global _random_magic_number
-    _random_magic_number = seed
+_random_value = 0xDEADBEEF
 
 
 def custom_random() -> float:
-    global _random_magic_number
-    _random_magic_number = (_random_magic_number * 63) % 0xC4CB7296
-    _random_magic_number = _random_magic_number ^ 0x1754FBF
-    _random_magic_number = (_random_magic_number * 0xFF) % 4294967296
-    _random_magic_number = _random_magic_number ^ 0x222F42CB
-    _random_magic_number = _random_magic_number | 0x1234567890
-    _random_magic_number = ((_random_magic_number + 14351514) * 32) % 7777333
-    return (_random_magic_number % 1000) / 1000.
+    global _random_value
+    _random_value = (_random_value * 63) % 0xC4CB7296
+    _random_value = _random_value ^ 0x1754FBF
+    _random_value = (_random_value * 0xFF) % 4294967296
+    _random_value = _random_value ^ 0x222F42CB
+    _random_value = _random_value | 0x1234567890
+    _random_value = ((_random_value + 14351514) * 32) % 7777333
+    return (_random_value % 1000) / 1000.
 
 
-def generate_random_array(m: int) -> NDArray[numpy.float32]:
+def custom_seed(seed: int) -> None:
+    global _random_value
+    _random_value = seed
+
+
+def generate_random_vector(m: int) -> NDArray[numpy.float32]:
     # Create an m by n NumPy array filled with random numbers
     return numpy.array([custom_random() for _ in range(m)], dtype=numpy.float32)
 
 
-def generate_random_arrays(count: int, m: int) -> List[NDArray[numpy.float32]]:
+def generate_random_vectors(count: int, m: int) -> List[NDArray[numpy.float32]]:
     # Create an m by n NumPy array filled with random numbers
-    return [generate_random_array(m) for _ in range(count + 1)]
+    return [generate_random_vector(m) for _ in range(count + 1)]
 
 
 def generate_random_matrix(m: int, n: int) -> NDArray[NDArray[numpy.float32]]:
@@ -55,18 +55,18 @@ def build_random_network(n_steps: int, n_layers: int, n_vocab: int, head_dimensi
     dimension = head_dimension * n_layers
     weighting = TransformerWeighting(
         token_embedding_table=generate_random_matrix(n_vocab, dimension),
-        rms_att_weight=generate_random_arrays(n_layers, dimension),
+        rms_att_weight=generate_random_vectors(n_layers, dimension),
         wq=generate_random_matrices(n_layers, dimension, dimension),
         wk=generate_random_matrices(n_layers, dimension, dimension),
         wv=generate_random_matrices(n_layers, dimension, dimension),
         wo=generate_random_matrices(n_layers, dimension, dimension),
-        rms_ffn_weight=generate_random_arrays(n_layers, dimension),
+        rms_ffn_weight=generate_random_vectors(n_layers, dimension),
         w1=generate_random_matrices(n_layers, hidden_dimension, dimension),
         w2=generate_random_matrices(n_layers, dimension, hidden_dimension),
         w3=generate_random_matrices(n_layers, hidden_dimension, dimension),
-        rms_final_weight=generate_random_array(dimension),
-        freq_cis_real=generate_random_arrays(n_steps, head_dimension // 2),
-        freq_cis_imag=generate_random_arrays(n_steps, head_dimension // 2)
+        rms_final_weight=generate_random_vector(dimension),
+        freq_cis_real=generate_random_vectors(n_steps, head_dimension // 2),
+        freq_cis_imag=generate_random_vectors(n_steps, head_dimension // 2)
     )
     return Network(dim=dimension, hidden_dim=hidden_dimension, n_layers=n_layers, num_attention_heads=n_layers,
                    num_key_value_heads=n_layers, vocab_size=n_vocab, seq_len=n_steps,
@@ -113,7 +113,7 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         index_layer = 2
         freq_cis_real_row = network.weighting.freq_cis_real[2]
         freq_cis_imag_row = network.weighting.freq_cis_imag[2]
-        token = generate_random_array(head_dimension * n_layers)
+        token = generate_random_vector(head_dimension * n_layers)
 
         # Call the function
         result = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
@@ -140,7 +140,7 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         index_layer = 4  # Replace with the desired index_layer
         freq_cis_real_row = network.weighting.freq_cis_real[2]
         freq_cis_imag_row = network.weighting.freq_cis_imag[2]
-        token = generate_random_array(head_dimension * n_layers)
+        token = generate_random_vector(head_dimension * n_layers)
 
         # Call the function
         result = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
