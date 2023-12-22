@@ -234,14 +234,14 @@ def compute_scores(head_dimension: int,
     return numpy.array(head_scores)
 
 
-def apply_rotations(head: NDArray[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
+def apply_rotations(head_vector: NDArray[numpy.float32], freq_cis_real_row: NDArray[numpy.float32],
                     freq_cis_imag_row: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
     result = []
-    for head_item_index in range(0, head.size, 2):
+    for head_item_index in range(0, head_vector.size, 2):
         real = freq_cis_real_row[head_item_index // 2]
         imag = freq_cis_imag_row[head_item_index // 2]
-        value = head[head_item_index]
-        value_next = head[head_item_index + 1]
+        value = head_vector[head_item_index]
+        value_next = head_vector[head_item_index + 1]
         result.append(value * real - value_next * imag)
         result.append(value * imag + value_next * real)
     return numpy.array(result)

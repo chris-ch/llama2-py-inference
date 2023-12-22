@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 from numpy.typing import NDArray
 
 from llama2 import inference
-from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv
+from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv, apply_rotations, rms_norm
 
 _random_value = 0xDEADBEEF
 
@@ -111,8 +111,8 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         network = build_random_network(n_steps=5, n_layers=n_layers, n_vocab=n_vocab, head_dimension=8,
                                        hidden_dimension=2)
         index_layer = 2
-        freq_cis_real_row = network.weighting.freq_cis_real[2]
-        freq_cis_imag_row = network.weighting.freq_cis_imag[2]
+        freq_cis_real_row = network.weighting.freq_cis_real[index_layer]
+        freq_cis_imag_row = network.weighting.freq_cis_imag[index_layer]
         token = generate_random_vector(head_dimension * n_layers)
 
         # Call the function
@@ -125,10 +125,41 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         assert_allclose(freq_cis_real_row, numpy.array([0.171, 0.255, 0.385, 0.716], dtype=numpy.float32), rtol=1e-5)
         assert_allclose(result[1][1], numpy.array(
             [-1.999097, 5.055076, -1.501158, 3.762684, -2.219901, 6.21974,
-                               5.030888, 4.501329], dtype=numpy.float32), rtol=1e-5)
+             5.030888, 4.501329], dtype=numpy.float32), rtol=1e-5)
         assert_allclose(result[2][2], numpy.array(
             [6.131495, 5.551599, 5.987549, 5.895988, 6.444849, 6.679024,
-                  4.993975, 4.984156], dtype=numpy.float32), rtol=1e-5)
+             4.993975, 4.984156], dtype=numpy.float32), rtol=1e-5)
+
+    def test_compute_rotations(self):
+        custom_seed(2)
+        n_vocab = 320
+        n_layers = 3
+        network = build_random_network(n_steps=5, n_layers=n_layers, n_vocab=n_vocab, head_dimension=8,
+                                       hidden_dimension=2)
+        index_layer = 2
+        wq = numpy.array([5.1699734, 5.4471865, 5.8559923, 6.6097193, 6.1578555, 5.306076, 5.0016994, 6.755227],
+                         dtype=numpy.float32)
+        freq_cis_real_row = network.weighting.freq_cis_real[index_layer]
+        freq_cis_imag_row = network.weighting.freq_cis_imag[index_layer]
+        result = apply_rotations(wq, freq_cis_real_row, freq_cis_imag_row)
+        assert_allclose(result, numpy.array(
+            [-2.5422149, 4.183382, -1.1704388, 4.045443, -1.481437, 6.513442, 3.2569659, 5.0768247],
+            dtype=numpy.float32), rtol=1e-5)
+
+    def test_compute_rms_norm(self):
+        custom_seed(2)
+        n_vocab = 320
+        head_dimension = 8
+        n_layers = 3
+        network = build_random_network(n_steps=5, n_layers=n_layers, n_vocab=n_vocab, head_dimension=8,
+                                       hidden_dimension=2)
+        index_layer = 2
+        token = generate_random_vector(head_dimension * n_layers)
+        rba: NDArray[numpy.float32] = rms_norm(token, network.weighting.rms_att_weight[index_layer])
+        self.assertEqual(rba.size, 24)
+        self.assertAlmostEqual(float(rba[0]), 0.6262543, places=6)
+        self.assertAlmostEqual(float(rba[-1]), 0.6156386, places=6)
+        self.assertAlmostEqual(rba.sum(), 11.379963, places=6)
 
     def test_compute_qkv_full(self):
         custom_seed(2)
@@ -148,9 +179,12 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 3)
 
-        assert_allclose(freq_cis_imag_row[:5], numpy.array([0.346, 0.646, 0.22 , 0.586, 0.981], dtype=numpy.float32), rtol=1e-5)
-        assert_allclose(freq_cis_real_row[:5], numpy.array([0.076, 0.564, 0.644, 0.398, 0.813], dtype=numpy.float32), rtol=1e-5)
-        assert_allclose(result[1][5][-4:], numpy.array([31.032567, 82.192196, 36.013003, 40.939727], dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(freq_cis_imag_row[:5], numpy.array([0.346, 0.646, 0.22, 0.586, 0.981], dtype=numpy.float32),
+                        rtol=1e-5)
+        assert_allclose(freq_cis_real_row[:5], numpy.array([0.076, 0.564, 0.644, 0.398, 0.813], dtype=numpy.float32),
+                        rtol=1e-5)
+        assert_allclose(result[1][5][-4:],
+                        numpy.array([31.032567, 82.192196, 36.013003, 40.939727], dtype=numpy.float32), rtol=1e-5)
 
     def test_custom_random(self):
         custom_seed(2)
