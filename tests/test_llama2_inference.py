@@ -37,7 +37,7 @@ def generate_random_vector(m: int) -> NDArray[numpy.float32]:
 
 def generate_random_vectors(count: int, m: int) -> List[NDArray[numpy.float32]]:
     # Create an m by n NumPy array filled with random numbers
-    return [generate_random_vector(m) for _ in range(count + 1)]
+    return [generate_random_vector(m) for _ in range(count)]
 
 
 def generate_random_matrix(m: int, n: int) -> NDArray[NDArray[numpy.float32]]:
@@ -47,7 +47,7 @@ def generate_random_matrix(m: int, n: int) -> NDArray[NDArray[numpy.float32]]:
 
 def generate_random_matrices(count: int, m: int, n: int) -> List[NDArray[NDArray[numpy.float32]]]:
     # Create an m by n NumPy array filled with random numbers
-    return [generate_random_matrix(m, n) for _ in range(count + 1)]
+    return [generate_random_matrix(m, n) for _ in range(count)]
 
 
 def build_random_network(n_steps: int, n_layers: int, n_vocab: int, head_dimension: int,
@@ -103,6 +103,50 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
                           output=result)
             self.assertEqual(expected, result.getvalue())
 
+    def test_generate_random_vector(self):
+        custom_seed(2)
+        v = generate_random_vector(4)
+        self.assertEqual(v.size, 4)
+        self.assertAlmostEqual(float(v[0]), 0.047, places=6)
+        self.assertAlmostEqual(float(v[1]), 0.453, places=6)
+        self.assertAlmostEqual(float(v[2]), 0.653, places=6)
+        self.assertAlmostEqual(float(v[3]), 0.577, places=6)
+
+    def test_generate_random_vectors(self):
+        custom_seed(2)
+        v1 = generate_random_vector(4)
+        self.assertEqual(v1.size, 4)
+        self.assertAlmostEqual(float(v1[0]), 0.047, places=6)
+        self.assertAlmostEqual(float(v1[1]), 0.453, places=6)
+        self.assertAlmostEqual(float(v1[2]), 0.653, places=6)
+        self.assertAlmostEqual(float(v1[3]), 0.577, places=6)
+
+        v2 = generate_random_vector(4)
+        self.assertAlmostEqual(float(v2[0]), 0.022, places=6)
+        self.assertAlmostEqual(float(v2[1]), 0.253, places=6)
+        self.assertAlmostEqual(float(v2[2]), 0.432, places=6)
+        self.assertAlmostEqual(float(v2[3]), 0.524, places=6)
+
+    def test_build_random_network(self):
+        custom_seed(2)
+        n_vocab = 320
+        n_layers = 3
+        network = build_random_network(n_steps=5, n_layers=n_layers, n_vocab=n_vocab, head_dimension=8,
+                                       hidden_dimension=2)
+        index_layer = 2
+        freq_cis_real_row = network.weighting.freq_cis_real[index_layer]
+        freq_cis_imag_row = network.weighting.freq_cis_imag[index_layer]
+        token_matrix = network.weighting.token_embedding_table
+        self.assertAlmostEqual(float(token_matrix[0][0]), 0.047, places=6)
+        self.assertAlmostEqual(float(token_matrix[319][23]), 0.828, places=6)
+
+        assert_allclose(freq_cis_real_row, numpy.array([0.828, 0.145, 0.344, 0.043], dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(freq_cis_imag_row, numpy.array([0.981, 0.754, 0.745, 0.609], dtype=numpy.float32), rtol=1e-5)
+        expected_attn_weights = [0.448, 0.975, 0.957, 0.775, 0.288, 0.913, 0.529, 0.169, 0.7,
+                  0.511, 0.013, 0.952, 0.401, 0.661, 0.845, 0.121, 0.272, 0.256,
+                  0.376, 0.958, 0.046, 0.471, 0.226, 0.462]
+        assert_allclose(network.weighting.rms_att_weight[2], numpy.array(expected_attn_weights, dtype=numpy.float32), rtol=1e-5)
+
     def test_compute_qkv_small(self):
         custom_seed(2)
         n_vocab = 320
@@ -121,14 +165,14 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 3)
 
-        assert_allclose(freq_cis_imag_row, numpy.array([0.629, 0.403, 0.726, 0.048], dtype=numpy.float32), rtol=1e-5)
-        assert_allclose(freq_cis_real_row, numpy.array([0.171, 0.255, 0.385, 0.716], dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(freq_cis_imag_row, numpy.array([0.981, 0.754, 0.745, 0.609], dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(freq_cis_real_row, numpy.array([0.828, 0.145, 0.344, 0.043], dtype=numpy.float32), rtol=1e-5)
         assert_allclose(result[1][1], numpy.array(
-            [-1.999097, 5.055076, -1.501158, 3.762684, -2.219901, 6.21974,
-             5.030888, 4.501329], dtype=numpy.float32), rtol=1e-5)
+            [-1.262483, 9.873482, -1.809541, 4.85637, -1.716298, 4.831686,
+            -2.449315, 3.406103], dtype=numpy.float32), rtol=1e-5)
         assert_allclose(result[2][2], numpy.array(
-            [6.131495, 5.551599, 5.987549, 5.895988, 6.444849, 6.679024,
-             4.993975, 4.984156], dtype=numpy.float32), rtol=1e-5)
+            [4.61404 , 5.498788, 5.519291, 5.196641, 4.792354, 3.996622,
+                  4.755136, 5.863463], dtype=numpy.float32), rtol=1e-5)
 
     def test_compute_rotations(self):
         custom_seed(2)
@@ -143,7 +187,8 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         freq_cis_imag_row = network.weighting.freq_cis_imag[index_layer]
         result = apply_rotations(wq, freq_cis_real_row, freq_cis_imag_row)
         assert_allclose(result, numpy.array(
-            [-2.5422149, 4.183382, -1.1704388, 4.045443, -1.481437, 6.513442, 3.2569659, 5.0768247],
+            [-1.062952,  9.582014, -4.13461 ,  5.373827, -1.834724,  6.412893,
+                  -3.89886 ,  3.33651],
             dtype=numpy.float32), rtol=1e-5)
 
     def test_compute_rms_norm(self):
@@ -153,13 +198,18 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         n_layers = 3
         network = build_random_network(n_steps=5, n_layers=n_layers, n_vocab=n_vocab, head_dimension=8,
                                        hidden_dimension=2)
-        index_layer = 2
         token = generate_random_vector(head_dimension * n_layers)
+        index_layer = 2
         rba: NDArray[numpy.float32] = rms_norm(token, network.weighting.rms_att_weight[index_layer])
+        self.assertAlmostEqual(float(token[0]), 0.445, places=6)
+        self.assertAlmostEqual(float(token[23]), 0.529, places=6)
+        self.assertAlmostEqual(float(network.weighting.rms_att_weight[index_layer][0]), 0.448, places=6)
+        self.assertAlmostEqual(float(network.weighting.rms_att_weight[index_layer][7]), 0.169, places=6)
+
         self.assertEqual(rba.size, 24)
-        self.assertAlmostEqual(float(rba[0]), 0.6262543, places=6)
-        self.assertAlmostEqual(float(rba[-1]), 0.6156386, places=6)
-        self.assertAlmostEqual(rba.sum(), 11.379963, places=6)
+        self.assertAlmostEqual(float(rba[0]), 0.34457278, places=6)
+        self.assertAlmostEqual(float(rba[-1]), 0.42241624, places=6)
+        self.assertAlmostEqual(rba.sum(), 9.711192, places=6)
 
     def test_compute_qkv_full(self):
         custom_seed(2)
@@ -179,12 +229,12 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 3)
 
-        assert_allclose(freq_cis_imag_row[:5], numpy.array([0.346, 0.646, 0.22, 0.586, 0.981], dtype=numpy.float32),
+        assert_allclose(freq_cis_imag_row[:5], numpy.array([0.769, 0.913, 0.77 , 0.791, 0.171], dtype=numpy.float32),
                         rtol=1e-5)
-        assert_allclose(freq_cis_real_row[:5], numpy.array([0.076, 0.564, 0.644, 0.398, 0.813], dtype=numpy.float32),
+        assert_allclose(freq_cis_real_row[:5], numpy.array([0.913, 0.529, 0.169, 0.7  , 0.511], dtype=numpy.float32),
                         rtol=1e-5)
         assert_allclose(result[1][5][-4:],
-                        numpy.array([31.032567, 82.192196, 36.013003, 40.939727], dtype=numpy.float32), rtol=1e-5)
+                        numpy.array([ 28.976269, 114.114619, -52.949184,  73.157083], dtype=numpy.float32), rtol=1e-5)
 
     def test_custom_random(self):
         custom_seed(2)
