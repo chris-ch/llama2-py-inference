@@ -63,7 +63,8 @@ def checkpoint_init_weights(conf: Network, file: BinaryIO) -> TransformerWeighti
 
     def read_as_matrix_list(ndepth: int, nrows: int, ncols: int) -> List[NDArray[NDArray[numpy.float32]]]:
         values = struct.unpack(f'{nrows * ncols * ndepth}f', file.read(ndepth * nrows * ncols * 4))
-        return [numpy.array(values[i:i + nrows * ncols], dtype=numpy.float32).reshape((ncols, nrows)) for i in range(0, len(values), nrows * ncols)]
+        return [numpy.array(values[i:i + nrows * ncols], dtype=numpy.float32).reshape((ncols, nrows)) for i in
+                range(0, len(values), nrows * ncols)]
 
     weights = TransformerWeighting()
     weights.token_embedding_table = read_as_matrix(conf.vocab_size, conf.dim)
@@ -123,7 +124,8 @@ def transformer(token_code: int,
     key_cache, value_cache = cache.key_cache, cache.value_cache
     # forwarding all the layers
     for index_layer in range(network.n_layers):
-        token, key_cache, value_cache = create_layer_token(network, step_count, key_cache, value_cache, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
+        token, key_cache, value_cache = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
+                                                           freq_cis_real_row, freq_cis_imag_row, token)
 
     # Final rmsnorm
     token = rms_norm(token, network.weighting.rms_final_weight)
@@ -138,7 +140,8 @@ def create_layer_token(network: Network, step_count: int,
                        index_layer: int,
                        freq_cis_real_row: NDArray[numpy.float32],
                        freq_cis_imag_row: NDArray[numpy.float32],
-                       token: NDArray[numpy.float32]) -> Tuple[NDArray[numpy.float32], List[List[List[NDArray[numpy.float32]]]], List[List[List[NDArray[numpy.float32]]]]]:
+                       token: NDArray[numpy.float32]) -> Tuple[
+    NDArray[numpy.float32], List[List[List[NDArray[numpy.float32]]]], List[List[List[NDArray[numpy.float32]]]]]:
     heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
     new_key_cache_step = key_cache[step_count] + [heads_k]
     new_value_cache_step = value_cache[step_count] + [heads_v]
@@ -146,7 +149,8 @@ def create_layer_token(network: Network, step_count: int,
     new_value_cache = value_cache  # should copy in the case of Haskell
     new_key_cache[step_count] = new_key_cache_step
     new_value_cache[step_count] = new_value_cache_step
-    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, new_key_cache, new_value_cache, heads_q)
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, new_key_cache,
+                                                                        new_value_cache, heads_q)
     delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
     # Final matrix multiplication to get the output of the attention and residual branch activation back into token
     token_new = numpy.add(token, delta_token_qkv)
@@ -156,7 +160,8 @@ def create_layer_token(network: Network, step_count: int,
     return numpy.add(token_new, delta_token_ffn), new_key_cache, new_value_cache
 
 
-def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
+def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[
+    numpy.float32]:
     rba = rms_norm(token, weighting.rms_ffn_weight[index_layer])
     hidden_dimension_buffer1 = numpy.dot(weighting.w1[index_layer], rba)
     hidden_dimension_buffer2 = numpy.dot(weighting.w3[index_layer], rba)
@@ -169,18 +174,21 @@ def compute_qkv(network: Network,
                 index_layer: int,
                 freq_cis_real_row: NDArray[numpy.float32],
                 freq_cis_imag_row: NDArray[numpy.float32],
-                token: NDArray[numpy.float32]) -> Tuple[List[NDArray[numpy.float32]], List[NDArray[numpy.float32]], List[NDArray[numpy.float32]]]:
+                token: NDArray[numpy.float32]) -> Tuple[
+    List[NDArray[numpy.float32]], List[NDArray[numpy.float32]], List[NDArray[numpy.float32]]]:
     # Attention rmsnorm
     rba: NDArray[numpy.float32] = rms_norm(token, network.weighting.rms_att_weight[index_layer])
     # QKV matmuls for this position
     w_q: NDArray[NDArray[numpy.float32]] = numpy.dot(network.weighting.wq[index_layer], rba).reshape(
         network.num_attention_heads,
         network.head_dimension)
-    heads_q: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row) for
+    heads_q: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row)
+                                             for
                                              head in w_q.tolist()]
     w_k = numpy.dot(network.weighting.wk[index_layer], rba).reshape(network.num_attention_heads,
-                                                                     network.head_dimension)
-    heads_k: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row) for
+                                                                    network.head_dimension)
+    heads_k: List[NDArray[numpy.float32]] = [apply_rotations(numpy.array(head), freq_cis_real_row, freq_cis_imag_row)
+                                             for
                                              head in w_k.tolist()]
     w_v: NDArray[NDArray[numpy.float32]] = network.weighting.wv[index_layer]
     heads_v: List[NDArray[numpy.float32]] = list(
@@ -199,16 +207,19 @@ def multihead_activation(network: Network,
     activations: List[NDArray[numpy.float32]] = []
     # Multihead attention. Iterate over all heads
     for index_head in range(network.num_attention_heads):
-        raw_scores: NDArray[numpy.float32] = compute_scores(network.head_dimension, key_cache, index_layer, index_head, heads_q)
+        raw_scores: NDArray[numpy.float32] = compute_scores(network.head_dimension, key_cache, index_layer, index_head,
+                                                            heads_q)
         # Softmax the scores to get attention weights, from 0..pos inclusively
         head_scores: NDArray[numpy.float32] = softmax(raw_scores, len(raw_scores)).tolist()
         # Weighted sum of the values, store back into residual branch activation
-        current_activation: NDArray[numpy.float32] = build_activation(network.head_dimension, index_layer, value_cache, index_head, head_scores)
+        current_activation: NDArray[numpy.float32] = build_activation(network.head_dimension, index_layer, value_cache,
+                                                                      index_head, head_scores)
         activations.append(current_activation)
     return numpy.array(activations)
 
 
-def build_activation(dimension: int, index_layer: int, value_cache: List[List[List[NDArray[numpy.float32]]]], index_head: int, head_scores: List[numpy.float32]) -> NDArray[numpy.float32]:
+def build_activation(dimension: int, index_layer: int, value_cache: List[List[List[NDArray[numpy.float32]]]],
+                     index_head: int, head_scores: List[numpy.float32]) -> NDArray[numpy.float32]:
     current_activation = numpy.zeros(shape=dimension)
     for count in range(len(value_cache)):
         value_vector: NDArray[numpy.float32] = value_cache[count][index_layer][index_head]
@@ -340,7 +351,8 @@ def _load_network(file: BinaryIO) -> Network:
     return network
 
 
-def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: List[int], temperature: float, vocab: List[str], output) -> List[str]:
+def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: List[int], temperature: float,
+                    vocab: List[str], output) -> List[str]:
     result = []
     token_code: int = 1
     timestep: int = 0  # Position in the sequence
@@ -353,7 +365,8 @@ def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: Lis
     while timestep < checked_max_steps:
         cache.key_cache.append([])
         cache.value_cache.append([])
-        token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, cache)
+        token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code,
+                                                    cache)
         result.append(token_str)
 
         print(token_str, end="", flush=True, file=output)
