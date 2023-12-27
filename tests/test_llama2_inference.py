@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from llama2 import inference
 from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv, apply_rotations, rms_norm, \
-    multihead_activation, build_activation
+    multihead_activation, build_activation, compute_delta_ffn
 
 _random_value = 0xDEADBEEF
 
@@ -334,6 +334,25 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
     def test_custom_random(self):
         custom_seed(2)
         self.assertEqual([custom_random() for _ in range(3)], [0.047, 0.453, 0.653])
+
+    def test_compute_delta_ffn(self):
+        custom_seed(2)
+        n_vocab = 32000
+        head_dimension = 48
+        n_layers = 6
+        network = build_random_network(n_steps=256, n_layers=n_layers, n_vocab=n_vocab, head_dimension=head_dimension,
+                                       hidden_dimension=768)
+        index_layer = 4  # Replace with the desired index_layer
+        token = generate_random_vector(288)
+        delta_ffn = compute_delta_ffn(network.weighting, index_layer, token)
+        self.assertEqual(len(delta_ffn), 288)
+        self.assertAlmostEqual(float(token[0]), 0.616, places=6)
+        self.assertAlmostEqual(float(token[287]), 0.176, places=6)
+        self.assertAlmostEqual(float(delta_ffn[0]), 1749410.1171746738, places=6)
+        self.assertAlmostEqual(float(delta_ffn[287]), 1736456.487817695, places=6)
+        self.assertAlmostEqual(float(sum(delta_ffn)), 500590281.58948934, places=6)
+        self.assertAlmostEqual(float(min(delta_ffn)), 1723942.4036516517, places=6)
+        self.assertAlmostEqual(float(max(delta_ffn)),  1753680.2377535875, places=6)
 
 
 if __name__ == '__main__':

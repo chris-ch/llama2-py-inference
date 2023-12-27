@@ -219,7 +219,7 @@ def multihead_activation(network: Network,
 
 
 def build_activation(dimension: int, index_layer: int, value_cache: List[List[List[NDArray[numpy.float32]]]],
-                     index_head: int, head_scores: List[numpy.float32]) -> NDArray[numpy.float32]:
+                     index_head: int, head_scores: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
     current_activation = numpy.zeros(shape=dimension)
     for count in range(len(value_cache)):
         value_vector: NDArray[numpy.float32] = value_cache[count][index_layer][index_head]
