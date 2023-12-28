@@ -443,6 +443,21 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         new_token, new_kc, new_vc = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
                                              freq_cis_real_row, freq_cis_imag_row, token)
 
+        activations = multihead_activation(network, index_layer, new_kc, new_vc, q)
+        delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
+
+        self.assertEqual(activations.shape, (6, 48))
+        self.assertAlmostEqual(float(activations.trace()), 407.2077331542969, places=6)
+        self.assertAlmostEqual(float(activations.sum()), 19385.04123687744, places=6)
+        self.assertAlmostEqual(float(activations.min()), 59.436580657958984, places=6)
+        self.assertAlmostEqual(float(activations.max()), 87.67498779296875, places=6)
+        self.assertEqual(activations.argmin(), 17)
+        self.assertEqual(activations.argmax(), 4)
+
+        self.assertAlmostEqual(float(delta_token_qkv.sum()), 2897446.0276938234, places=6)
+        self.assertAlmostEqual(float(delta_token_qkv.max()), 10245.32163638757, places=6)
+        self.assertAlmostEqual(float(delta_token_qkv.min()), 9862.115233500097, places=6)
+
         self.assertEqual(len(key_cache[2]), 3)
         self.assertEqual(len(value_cache[2]), 3)
         self.assertAlmostEqual(float(key_cache[2][2][0][0]), 13.5140090, places=6)
@@ -450,6 +465,13 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertAlmostEqual(float(value_cache[2][2][0][0]), 69.27178955, places=6)
         self.assertAlmostEqual(float(value_cache[2][2][5][47]), 68.813262939, places=6)
         self.assertEqual(len(new_token), 288)
+
+        assert_allclose(new_token[:5], numpy.array([2439003.21083, 2431245.92234, 2431190.146634, 2438949.540824,
+                  2426321.367406], dtype=numpy.float32),
+                        rtol=1e-5)
+        assert_allclose(new_token[-5:], numpy.array([2439128.438666, 2428409.049385, 2433409.944273, 2427228.695965,
+                  2442824.509698], dtype=numpy.float32),
+                        rtol=1e-5)
         self.assertAlmostEqual(float(token[0]), 0.616, places=6)
         self.assertAlmostEqual(float(token[287]), 0.176, places=6)
         self.assertAlmostEqual(float(new_token[0]), 2439003.2108297, places=6)
