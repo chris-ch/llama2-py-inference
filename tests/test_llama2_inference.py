@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from llama2 import inference
 from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv, apply_rotations, rms_norm, \
-    multihead_activation, build_activation, compute_delta_ffn
+    multihead_activation, build_activation, compute_delta_ffn, create_layer_token
 
 _random_value = 0xDEADBEEF
 
@@ -203,12 +203,18 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
                                        hidden_dimension=2)
         index_layer = 2
         heads_q = [generate_random_vector(48) for _ in range(6)]
-        expected_hq1 = [0.734, 0.616, 0.897, 0.159, 0.346, 0.646, 0.22, 0.586, 0.981, 0.769, 0.913, 0.77, 0.791, 0.171, 0.255, 0.385,
-         0.716, 0.948, 0.233, 0.858, 0.206, 0.161, 9.0e-2, 0.195, 0.828, 0.145, 0.344, 4.3e-2, 0.766, 0.949, 0.75, 0.7,
-         0.953, 0.514, 0.37, 0.866, 0.755, 0.629, 0.403, 0.726, 4.8e-2, 0.821, 0.872, 0.752, 0.981, 0.754, 0.745, 0.609]
-        expected_hq6 = [9.0e-2,0.195,0.828,0.145,0.344,4.3e-2,0.766,0.949,0.75,0.7,0.953,0.514,0.37,0.866,0.755,0.629,
-                        0.403,0.726,4.8e-2,0.821,0.872,0.752,0.981,0.754,0.745,0.609,0.162,7.6e-2,0.564,0.644,0.398,0.813,
-                        0.421,0.665,0.445,0.391,0.504,0.73,0.434,0.32,0.323,0.323,0.483,0.502,0.984,0.14,9.0e-2,0.232]
+        expected_hq1 = [0.734, 0.616, 0.897, 0.159, 0.346, 0.646, 0.22, 0.586, 0.981, 0.769, 0.913, 0.77, 0.791, 0.171,
+                        0.255, 0.385,
+                        0.716, 0.948, 0.233, 0.858, 0.206, 0.161, 9.0e-2, 0.195, 0.828, 0.145, 0.344, 4.3e-2, 0.766,
+                        0.949, 0.75, 0.7,
+                        0.953, 0.514, 0.37, 0.866, 0.755, 0.629, 0.403, 0.726, 4.8e-2, 0.821, 0.872, 0.752, 0.981,
+                        0.754, 0.745, 0.609]
+        expected_hq6 = [9.0e-2, 0.195, 0.828, 0.145, 0.344, 4.3e-2, 0.766, 0.949, 0.75, 0.7, 0.953, 0.514, 0.37, 0.866,
+                        0.755, 0.629,
+                        0.403, 0.726, 4.8e-2, 0.821, 0.872, 0.752, 0.981, 0.754, 0.745, 0.609, 0.162, 7.6e-2, 0.564,
+                        0.644, 0.398, 0.813,
+                        0.421, 0.665, 0.445, 0.391, 0.504, 0.73, 0.434, 0.32, 0.323, 0.323, 0.483, 0.502, 0.984, 0.14,
+                        9.0e-2, 0.232]
         assert_allclose(heads_q[0], numpy.array(expected_hq1), rtol=1e-5)
         assert_allclose(heads_q[-1], numpy.array(expected_hq6), rtol=1e-5)
         key_cache = [[[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
@@ -216,19 +222,19 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         value_cache = [[[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
                        [[generate_random_vector(48) for _ in range(6)] for _ in range(3)]]
 
-        head_scores_example = [0.5194815185588364, 0.48051848144116366]
+        head_scores_example = numpy.array([0.5194815185588364, 0.48051848144116366])
         activation = build_activation(network.head_dimension, 2, value_cache, 3, head_scores_example)
 
-        expected_activation = numpy.array([0.3045971 , 0.28449363, 0.48838997, 0.26805186, 0.72583091,
-       0.58409174, 0.67818201, 0.68331219, 0.7507793 , 0.48202663,
-       0.26566214, 0.45681779, 0.32925986, 0.72464937, 0.78846788,
-       0.55206428, 0.5221176 , 0.27327259, 0.3940515 , 0.15246741,
-       0.38288274, 0.90151936, 0.44484355, 0.61741503, 0.39233694,
-       0.77801296, 0.57515665, 0.51214337, 0.54863667, 0.83911714,
-       0.72254506, 0.30416898, 0.86215585, 0.49119536, 0.40411736,
-       0.25259773, 0.47084469, 0.42280443, 0.49616951, 0.61828625,
-       0.41131239, 0.87768853, 0.84770113, 0.74740264, 0.65272719,
-       0.54209012, 0.28646711, 0.47077943], dtype=numpy.float32)
+        expected_activation = numpy.array([0.3045971, 0.28449363, 0.48838997, 0.26805186, 0.72583091,
+                                           0.58409174, 0.67818201, 0.68331219, 0.7507793, 0.48202663,
+                                           0.26566214, 0.45681779, 0.32925986, 0.72464937, 0.78846788,
+                                           0.55206428, 0.5221176, 0.27327259, 0.3940515, 0.15246741,
+                                           0.38288274, 0.90151936, 0.44484355, 0.61741503, 0.39233694,
+                                           0.77801296, 0.57515665, 0.51214337, 0.54863667, 0.83911714,
+                                           0.72254506, 0.30416898, 0.86215585, 0.49119536, 0.40411736,
+                                           0.25259773, 0.47084469, 0.42280443, 0.49616951, 0.61828625,
+                                           0.41131239, 0.87768853, 0.84770113, 0.74740264, 0.65272719,
+                                           0.54209012, 0.28646711, 0.47077943], dtype=numpy.float32)
         assert_allclose(expected_activation, activation, rtol=1e-5)
 
         result = multihead_activation(network, index_layer, key_cache, value_cache, heads_q)
@@ -335,6 +341,18 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         custom_seed(2)
         self.assertEqual([custom_random() for _ in range(3)], [0.047, 0.453, 0.653])
 
+    def test_reshape(self):
+        custom_seed(2)
+        matrix = generate_random_matrix(3, 4)
+        assert_allclose(matrix, numpy.array([
+            [0.047, 0.453, 0.653, 0.577],
+             [0.022, 0.253, 0.432, 0.524],
+             [0.114, 0.917, 0.747, 0.164]
+        ], dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(matrix.reshape(12), numpy.array([0.047, 0.453, 0.653, 0.577,
+                                                         0.022, 0.253, 0.432, 0.524,
+                                                         0.114, 0.917, 0.747, 0.164], dtype=numpy.float32), rtol=1e-5)
+
     def test_compute_delta_ffn(self):
         custom_seed(2)
         n_vocab = 32000
@@ -352,7 +370,48 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertAlmostEqual(float(delta_ffn[287]), 1736456.487817695, places=6)
         self.assertAlmostEqual(float(sum(delta_ffn)), 500590281.58948934, places=6)
         self.assertAlmostEqual(float(min(delta_ffn)), 1723942.4036516517, places=6)
-        self.assertAlmostEqual(float(max(delta_ffn)),  1753680.2377535875, places=6)
+        self.assertAlmostEqual(float(max(delta_ffn)), 1753680.2377535875, places=6)
+
+    def test_create_layer_token(self):
+        custom_seed(2)
+        n_vocab = 32000
+        head_dimension = 48
+        n_layers = 6
+        network = build_random_network(n_steps=256, n_layers=n_layers, n_vocab=n_vocab, head_dimension=head_dimension,
+                                       hidden_dimension=768)
+        index_layer = 2
+        step_count = 2
+        token = generate_random_vector(288)
+        freq_cis_real_row = network.weighting.freq_cis_real[2]
+        freq_cis_imag_row = network.weighting.freq_cis_imag[2]
+
+        key_cache = [
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
+        ]
+        value_cache = [
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
+        ]
+        new_token, new_kc, new_vc = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
+                                             freq_cis_real_row, freq_cis_imag_row, token)
+
+        self.assertEqual(len(key_cache[2]), 3)
+        self.assertEqual(len(value_cache[2]), 3)
+        self.assertAlmostEqual(float(key_cache[2][2][0][0]), 13.5140090, places=6)
+        self.assertAlmostEqual(float(key_cache[2][2][5][47]), 74.42684423, places=6)
+        self.assertAlmostEqual(float(value_cache[2][2][0][0]), 69.27178955, places=6)
+        self.assertAlmostEqual(float(value_cache[2][2][5][47]), 74.42684423, places=6)
+        self.assertEqual(len(new_token), 288)
+        self.assertAlmostEqual(float(token[0]), 0.616, places=6)
+        self.assertAlmostEqual(float(token[287]), 0.176, places=6)
+        self.assertAlmostEqual(float(new_token[0]), 2439003.2108297, places=6)
+        self.assertAlmostEqual(float(new_token[287]), 2442824.50969825, places=6)
+        self.assertAlmostEqual(float(sum(new_token)), 701135654.4605024, places=6)
+        self.assertAlmostEqual(float(min(new_token)), 2418155.80873464, places=6)
+        self.assertAlmostEqual(float(max(new_token)), 2453978.8297747127, places=6)
 
 
 if __name__ == '__main__':
