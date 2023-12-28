@@ -395,6 +395,51 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
             [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
             [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
         ]
+
+        q, k, v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
+        self.assertEqual(len(q), 6)
+        self.assertEqual(len(k), 6)
+        self.assertEqual(len(v), 6)
+
+        self.assertAlmostEqual(float(k[0][0]), 13.5140090, places=6)
+        self.assertAlmostEqual(float(k[0][47]), 76.510922895, places=6)
+        self.assertAlmostEqual(float(k[1][0]), 4.048432575029892, places=6)
+        self.assertAlmostEqual(float(k[1][47]), 75.99460779792548, places=6)
+        self.assertAlmostEqual(float(k[2][0]), -7.048659211879567, places=6)
+        self.assertAlmostEqual(float(k[2][47]), 74.24330840422249, places=6)
+        self.assertAlmostEqual(float(k[3][0]), 11.798806806020366, places=6)
+        self.assertAlmostEqual(float(k[3][47]), 71.89907238107276, places=6)
+        self.assertAlmostEqual(float(k[4][0]), 12.957168370788168, places=6)
+        self.assertAlmostEqual(float(k[4][47]), 74.44716220191003, places=6)
+        self.assertAlmostEqual(float(k[5][0]), 10.358258170685986, places=6)
+        self.assertAlmostEqual(float(k[5][47]), 74.42684423320338, places=6)
+
+        self.assertAlmostEqual(float(q[0][0]), 10.047595305990399, places=6)
+        self.assertAlmostEqual(float(q[0][47]), 73.5352357337324, places=6)
+        self.assertAlmostEqual(float(q[1][0]), 14.202909536670631, places=6)
+        self.assertAlmostEqual(float(q[1][47]), 67.21390186872122, places=6)
+        self.assertAlmostEqual(float(q[2][0]), 5.207165646689646, places=6)
+        self.assertAlmostEqual(float(q[2][47]), 76.75705530550135, places=6)
+        self.assertAlmostEqual(float(q[3][0]), 9.709002411821984, places=6)
+        self.assertAlmostEqual(float(q[3][47]), 93.7325735273318, places=6)
+        self.assertAlmostEqual(float(q[4][0]), 5.700445560096341, places=6)
+        self.assertAlmostEqual(float(q[4][47]), 73.207704757823, places=6)
+        self.assertAlmostEqual(float(q[5][0]), 12.008699038487975, places=6)
+        self.assertAlmostEqual(float(q[5][47]), 70.1946099367691, places=6)
+
+        self.assertAlmostEqual(float(v[0][0]), 69.27178955078125, places=6)
+        self.assertAlmostEqual(float(v[0][47]), 68.98504638671875, places=6)
+        self.assertAlmostEqual(float(v[1][0]), 68.5321044921875, places=6)
+        self.assertAlmostEqual(float(v[1][47]), 65.29499816894531, places=6)
+        self.assertAlmostEqual(float(v[2][0]), 67.18028259277344, places=6)
+        self.assertAlmostEqual(float(v[2][47]), 66.77857971191406, places=6)
+        self.assertAlmostEqual(float(v[3][0]), 66.6872329711914, places=6)
+        self.assertAlmostEqual(float(v[3][47]), 71.23432922363281, places=6)
+        self.assertAlmostEqual(float(v[4][0]), 68.06254577636719, places=6)
+        self.assertAlmostEqual(float(v[4][47]), 69.51446533203125, places=6)
+        self.assertAlmostEqual(float(v[5][0]), 62.54541778564453, places=6)
+        self.assertAlmostEqual(float(v[5][47]), 68.81326293945312, places=6)
+
         new_token, new_kc, new_vc = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
                                              freq_cis_real_row, freq_cis_imag_row, token)
 
