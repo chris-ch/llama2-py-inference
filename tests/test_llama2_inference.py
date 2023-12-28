@@ -403,7 +403,7 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertAlmostEqual(float(key_cache[2][2][0][0]), 13.5140090, places=6)
         self.assertAlmostEqual(float(key_cache[2][2][5][47]), 74.42684423, places=6)
         self.assertAlmostEqual(float(value_cache[2][2][0][0]), 69.27178955, places=6)
-        self.assertAlmostEqual(float(value_cache[2][2][5][47]), 74.42684423, places=6)
+        self.assertAlmostEqual(float(value_cache[2][2][5][47]), 68.813262939, places=6)
         self.assertEqual(len(new_token), 288)
         self.assertAlmostEqual(float(token[0]), 0.616, places=6)
         self.assertAlmostEqual(float(token[287]), 0.176, places=6)
