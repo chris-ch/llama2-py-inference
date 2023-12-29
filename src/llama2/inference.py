@@ -124,8 +124,7 @@ def transformer(token_code: int,
     key_cache, value_cache = cache.key_cache, cache.value_cache
     # forwarding all the layers
     for index_layer in range(network.n_layers):
-        token, key_cache, value_cache = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
-                                                           freq_cis_real_row, freq_cis_imag_row, token)
+        token = create_layer_token(network, step_count, key_cache, value_cache, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
 
     # Final rmsnorm
     token = rms_norm(token, network.weighting.rms_final_weight)
@@ -140,24 +139,18 @@ def create_layer_token(network: Network, step_count: int,
                        index_layer: int,
                        freq_cis_real_row: NDArray[numpy.float32],
                        freq_cis_imag_row: NDArray[numpy.float32],
-                       token: NDArray[numpy.float32]) -> Tuple[
-    NDArray[numpy.float32], List[List[List[NDArray[numpy.float32]]]], List[List[List[NDArray[numpy.float32]]]]]:
+                       token: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
     heads_q, heads_k, heads_v = compute_qkv(network, index_layer, freq_cis_real_row, freq_cis_imag_row, token)
-    new_key_cache_step = key_cache[step_count] + [heads_k]
-    new_value_cache_step = value_cache[step_count] + [heads_v]
-    new_key_cache = key_cache  # should copy in the case of Haskell
-    new_value_cache = value_cache  # should copy in the case of Haskell
-    new_key_cache[step_count] = new_key_cache_step
-    new_value_cache[step_count] = new_value_cache_step
-    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, new_key_cache,
-                                                                        new_value_cache, heads_q)
+    key_cache[step_count] = key_cache[step_count] + [heads_k]
+    value_cache[step_count] = value_cache[step_count] + [heads_v]
+    activations: NDArray[NDArray[numpy.float32]] = multihead_activation(network, index_layer, key_cache, value_cache, heads_q)
     delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
     # Final matrix multiplication to get the output of the attention and residual branch activation back into token
     token_new = numpy.add(token, delta_token_qkv)
     # Feed-forward Neural Network
     delta_token_ffn = compute_delta_ffn(network.weighting, index_layer, token_new)
     # Residual connection
-    return numpy.add(token_new, delta_token_ffn), new_key_cache, new_value_cache
+    return numpy.add(token_new, delta_token_ffn)
 
 
 def compute_delta_ffn(weighting: TransformerWeighting, index_layer: int, token: NDArray[numpy.float32]) -> NDArray[

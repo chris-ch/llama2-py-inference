@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from llama2 import inference
 from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv, apply_rotations, rms_norm, \
-    multihead_activation, build_activation, compute_delta_ffn, create_layer_token
+    multihead_activation, build_activation, compute_delta_ffn, create_layer_token, transformer, RunCache
 
 _random_value = 0xDEADBEEF
 
@@ -440,10 +440,10 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertAlmostEqual(float(v[5][0]), 62.54541778564453, places=6)
         self.assertAlmostEqual(float(v[5][47]), 68.81326293945312, places=6)
 
-        new_token, new_kc, new_vc = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
+        new_token = create_layer_token(network, step_count, key_cache, value_cache, index_layer,
                                              freq_cis_real_row, freq_cis_imag_row, token)
 
-        activations = multihead_activation(network, index_layer, new_kc, new_vc, q)
+        activations = multihead_activation(network, index_layer, key_cache, value_cache, q)
         delta_token_qkv = numpy.dot(network.weighting.wo[index_layer], activations.reshape(network.dim))
 
         self.assertEqual(activations.shape, (6, 48))
@@ -480,6 +480,34 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
         self.assertAlmostEqual(float(min(new_token)), 2418155.80873464, places=6)
         self.assertAlmostEqual(float(max(new_token)), 2453978.8297747127, places=6)
 
+    def test_transformer(self):
+        custom_seed(2)
+        n_vocab = 32000
+        head_dimension = 48
+        n_layers = 6
+        n_steps = 256
+        hidden_dimension = 768
+        network = build_random_network(n_steps=n_steps, n_layers=n_layers, n_vocab=n_vocab, head_dimension=head_dimension,
+                                       hidden_dimension=hidden_dimension)
+        step_count = 2
+        key_cache = [
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
+        ]
+        value_cache = [
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(6)],
+            [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
+        ]
+        token_code = 543
+        new_token = transformer(token_code, step_count, network, RunCache(key_cache=key_cache, value_cache=value_cache))
+        assert_allclose(new_token[:5], numpy.array(
+            [76.487913, 75.865855, 69.823235, 73.169692, 72.23708],
+            dtype=numpy.float32), rtol=1e-5)
+        assert_allclose(new_token[-5:], numpy.array(
+            [81.339855, 77.398117, 78.240746, 82.832889, 75.389774],
+            dtype=numpy.float32), rtol=1e-5)
 
-if __name__ == '__main__':
-    unittest.main()
+    if __name__ == '__main__':
+        unittest.main()
