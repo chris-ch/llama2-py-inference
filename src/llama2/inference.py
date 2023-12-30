@@ -212,7 +212,7 @@ def multihead_activation(network: Network,
 
 
 def build_activation(dimension: int, index_layer: int, value_cache: List[List[List[NDArray[numpy.float32]]]],
-                     index_head: int, head_scores: NDArray[numpy.float32]) -> NDArray[numpy.float32]:
+                     index_head: int, head_scores: List[numpy.float32]) -> NDArray[numpy.float32]:
     current_activation = numpy.zeros(shape=dimension)
     for count in range(len(value_cache)):
         value_vector: NDArray[numpy.float32] = value_cache[count][index_layer][index_head]
@@ -297,8 +297,7 @@ def time_in_ms() -> float:
     return int(time.time() * 1000)
 
 
-def draw_sample(probabilities: NDArray) -> int:
-    r = numpy.random.random()
+def draw_sample(r: float, probabilities: NDArray) -> int:
     cdf = numpy.cumsum(probabilities)
     return numpy.argmax(r < cdf)
 
@@ -346,20 +345,16 @@ def _load_network(file: BinaryIO) -> Network:
 
 def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: List[int], temperature: float,
                     vocab: List[str], output) -> List[str]:
-    result = []
     token_code: int = 1
-    timestep: int = 0  # Position in the sequence
 
     # Create and initialize the application RunState
-    cache = RunCache()
-    cache.key_cache = []
-    cache.value_cache = []
+    cache = RunCache(key_cache=[], value_cache=[])
 
-    while timestep < checked_max_steps:
+    result = []
+    for timestep in range(checked_max_steps):
         cache.key_cache.append([])
         cache.value_cache.append([])
-        token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code,
-                                                    cache)
+        token_str, next_token = generate_next_token(timestep, prompt_tokens, temperature, network, vocab, token_code, cache)
         result.append(token_str)
 
         print(token_str, end="", flush=True, file=output)
@@ -369,7 +364,6 @@ def generate_tokens(network: Network, checked_max_steps: int, prompt_tokens: Lis
 
         # Advance forward
         token_code = next_token
-        timestep += 1
 
     return result
 
@@ -389,11 +383,9 @@ def generate_next_token(timestep: int, prompt_tokens: List[int], temperature: fl
         # Apply the temperature to the logits
         # Apply softmax to the logits to get the probabilities for the next token
         # Sample from this distribution to get the next token
-        next_token = draw_sample(softmax(numpy.divide(logits, temperature), network.vocab_size))
+        r = numpy.random.random()
+        next_token = draw_sample(r, softmax(numpy.divide(logits, temperature), network.vocab_size))
 
     # Following BOS token (1), sentencepiece decoder strips any leading whitespace
-    token_str = (
-        vocab[next_token].lstrip()
-        if token_code == 1 and vocab[next_token][0] == ' ' else vocab[next_token]
-    )
+    token_str = vocab[next_token].lstrip() if token_code == 1 else vocab[next_token]
     return token_str, next_token

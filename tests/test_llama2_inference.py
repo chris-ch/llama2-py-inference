@@ -10,7 +10,8 @@ from numpy.typing import NDArray
 
 from llama2 import inference
 from llama2.inference import _process_tokens, Network, TransformerWeighting, compute_qkv, apply_rotations, rms_norm, \
-    multihead_activation, build_activation, compute_delta_ffn, create_layer_token, transformer, RunCache
+    multihead_activation, build_activation, compute_delta_ffn, create_layer_token, transformer, RunCache, draw_sample, \
+    softmax
 
 _random_value = 0xDEADBEEF
 
@@ -501,13 +502,29 @@ Lily felt proud of herself and continued to read her books, feeling happy and co
             [[generate_random_vector(48) for _ in range(6)] for _ in range(2)]
         ]
         token_code = 543
-        new_token = transformer(token_code, step_count, network, RunCache(key_cache=key_cache, value_cache=value_cache))
-        assert_allclose(new_token[:5], numpy.array(
+        run_cache = RunCache(key_cache=key_cache, value_cache=value_cache)
+        logits = transformer(token_code, step_count, network, run_cache)
+        assert_allclose(logits[:5], numpy.array(
             [76.487913, 75.865855, 69.823235, 73.169692, 72.23708],
             dtype=numpy.float32), rtol=1e-5)
-        assert_allclose(new_token[-5:], numpy.array(
+        assert_allclose(logits[-5:], numpy.array(
             [81.339855, 77.398117, 78.240746, 82.832889, 75.389774],
             dtype=numpy.float32), rtol=1e-5)
+
+        next_token = draw_sample(0.4, softmax(numpy.divide(logits, 0.8), network.vocab_size))
+        self.assertEqual(next_token, 12854)
+
+    def test_draw_sample(self):
+        self.assertEqual(0, draw_sample(0.05, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(1, draw_sample(0.2, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(1, draw_sample(0.35, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(2, draw_sample(0.4, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(2, draw_sample(0.45, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(4, draw_sample(0.8, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(4, draw_sample(0.85, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(5, draw_sample(0.95, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(5, draw_sample(1.0, numpy.array([0.1, 0.3, 0.2, 0.1, 0.2, 0.1])))
+        self.assertEqual(0, draw_sample(0.1, numpy.array([1.0])))
 
     if __name__ == '__main__':
         unittest.main()
